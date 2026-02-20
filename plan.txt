@@ -1,0 +1,91 @@
+Drone Polarizer + Mask Simulation Mini-Project
+
+Project Vision
+
+Build a flexible simulation framework to optimize a star camera +
+diffraction mask system for drone-based polarization calibration.
+
+End-of-Week Deliverable: - Parameter sweeps over exposure time, jitter,
+mask pitch, and optics. - Quantitative plots showing: - Platesolve
+success rate vs parameters - Diffraction orientation precision (sigma
+per frame) - Identification of viable design regions and recommended
+parameter ranges.
+
+Repository Structure
+
+notebooks/ 00_overview.ipynb 01_tier0_bounds.ipynb
+02_tier1_montecarlo.ipynb
+
+sim/ config.py stars.py optics.py mask.py noise.py render.py metrics.py
+sweep.py
+
+data/ figures/ README.md
+
+Design Philosophy
+
+-   Notebooks orchestrate experiments.
+-   sim/ contains reusable logic.
+-   Lock interfaces early so realism can be upgraded without refactoring
+    everything.
+
+Core Conceptual Objects
+
+Camera: - sensor dimensions - pixel size - read noise - QE
+approximation - gain - shutter type
+
+Lens: - focal length - f-number - transmission - PSF width - distortion
+model (optional)
+
+Sky: - sky brightness - bandpass - star density model
+
+Platform: - jitter model parameters - blur model
+
+Mask: - type (grating / coded aperture / slit / wire) - pitch /
+geometry - placement relative to pupil - transmission - diffraction
+intensity model
+
+Core Functional Interfaces (Conceptual)
+
+sample_star_field(sky, fov, seed) -> stars render_frame(stars, camera,
+lens, sky, platform, mask, exposure) -> image + truth
+metric_platesolve(image) -> solve_success + attitude_sigma
+metric_mask_angle(image) -> angle_estimate + sigma + quality_flags
+
+Development Plan (7 Days)
+
+Day 1 – Tier 0 Analytic Bounds - Compute FOV and plate scale. - Compute
+diffraction separation vs pitch. - Compute exposure ceiling from motion
+blur. - Estimate star counts from magnitude model. - Eliminate
+non-viable regions of parameter space.
+
+Day 2–3 – Tier 1 Monte Carlo Renderer - Generate synthetic star field. -
+Add PSF, background, shot noise, read noise. - Add motion blur kernel. -
+Add simplified diffraction effect. - Produce realistic synthetic frames.
+
+Day 4 – Metrics - Star detection and platesolve proxy metric. -
+Diffraction orientation estimator. - Return per-frame angle uncertainty.
+
+Day 5–6 – Parameter Sweeps - Grid sweep over exposure, jitter, pitch,
+f-number. - Store results in structured table. - Plot solve success vs
+sigma(angle). - Identify Pareto-optimal regions.
+
+Day 7 – Synthesis - Recommend pitch range. - Recommend exposure time
+regime. - Identify dominant uncertainty sources. - Document assumptions
+and limitations.
+
+Guiding Optimization Goals
+
+1.  High platesolve success rate (e.g. >99%).
+2.  Small per-frame diffraction angle uncertainty.
+3.  Short exposure time compatible with drone jitter.
+4.  Sufficient star count and brightness for robustness.
+
+Long-Term Expandability
+
+-   Upgrade diffraction physics to Fourier optics if necessary.
+-   Replace star density model with real catalog.
+-   Insert real platesolve backend.
+-   Insert real jitter PSD from drone telemetry.
+
+This document defines the architectural plan for the mini-project and
+serves as context for future development and iteration.
