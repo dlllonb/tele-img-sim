@@ -1,0 +1,16 @@
+# Jupyter
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+
+# Compiled Python
+*.pyc
+*.pyo
+*.pyd
+
+# Optional but recommended
+*.DS_Store
+Thumbs.db
