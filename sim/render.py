@@ -16,10 +16,10 @@ class RenderConfig:
     exposure_s: float = 0.1
 
     # --- photometry / background ---
-    sky_e_per_px_s: float = 0.0
+    sky_e_per_px_s: float = 3 # estimate of bortle ~5 sky 
     zeropoint_e_per_s: float = 0.0  # mag=0 -> e/s, placeholder for later
 
-    # --- optics ---
+    # --- optics ---o
     psf_sigma_px: float = 1.0
 
     # --- noise ---
