@@ -7,6 +7,8 @@ from .lens import Lens
 
 @dataclass
 class Frame:
+    camera: Camera
+    lens: Lens
     image: np.ndarray
     x_rad: np.ndarray
     y_rad: np.ndarray
@@ -76,16 +78,14 @@ class Frame:
         """
         ra_deg = np.asarray(ra_deg, dtype=float)
         dec_deg = np.asarray(dec_deg, dtype=float)
-
-        ra0 = math.radians(self.ra0_deg)
+    
+        # wrap RA difference into [-180, 180] degrees to handle 0/360 boundary
+        dra_deg = (ra_deg - self.ra0_deg + 180.0) % 360.0 - 180.0
+    
         dec0 = math.radians(self.dec0_deg)
-
-        ra  = np.radians(ra_deg)
-        dec = np.radians(dec_deg)
-
-        # small-angle tangent plane (radians)
-        x = (ra - ra0) * math.cos(dec0)
-        y = (dec - dec0)
+    
+        x = np.radians(dra_deg) * math.cos(dec0)
+        y = np.radians(dec_deg - self.dec0_deg)
 
         # apply rotation (to match make_blank_frame)
         if self.rot_deg != 0.0:
@@ -138,6 +138,8 @@ def make_blank_frame(camera: Camera,
     fov_y_deg = (camera.sensor_y_mm / lens.focal_mm) * (180.0 / math.pi)
 
     return Frame(
+        camera=camera,
+        lens=lens,
         image=img,
         x_rad=x,
         y_rad=y,

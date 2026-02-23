@@ -8,6 +8,7 @@ from .physics.psf import apply_psf
 from .physics.mask import apply_mask
 from .physics.jitter import apply_jitter
 from .physics.noise import apply_noise
+from .physics.sky import sky_layer
 
 
 @dataclass(frozen=True)
@@ -16,8 +17,11 @@ class RenderConfig:
     exposure_s: float = 0.1
 
     # --- photometry / background ---
-    sky_e_per_px_s: float = 3 # estimate of bortle ~5 sky 
+    sky_e_per_px_s: float = 3.0 # estimate of bortle ~5 sky 
+    sky_mu_mag_per_arcsec2: float = 21.0
     zeropoint_e_per_s: float = 0.0  # mag=0 -> e/s, placeholder for later
+    lambda_eff_nm: float = 550.0
+    band_nm: float = 90.0
 
     # --- optics ---o
     psf_sigma_px: float = 1.0
@@ -90,9 +94,12 @@ def render(frame: Frame,
 
     # ---- 1) sky layer (electrons) ----
     if cfg.enable_sky:
-        # stub sky: uniform background electrons over exposure
-        # (kept here because it's trivial; if it grows, move to sim/physics/background.py)
-        sky_e = np.full((ny, nx), cfg.sky_e_per_px_s * cfg.exposure_s, dtype=np.float32)
+        if getattr(cfg, "sky_e_per_px_s", 0.0) and cfg.sky_e_per_px_s > 0.0:
+            sky_rate = float(cfg.sky_e_per_px_s)
+        else:
+            sky_rate = sky_layer(frame, cfg)
+    
+        sky_e = np.full((ny, nx), sky_rate * cfg.exposure_s, dtype=np.float32)
     else:
         sky_e = np.zeros((ny, nx), dtype=np.float32)
 
@@ -167,37 +174,27 @@ def render(frame: Frame,
     return (frame, res) if return_intermediates else frame
 
 
-
 def plot_render_stages(frame, res, *,
                        figsize=(12, 6),
-                       cmap=None,
-                       vmin=None,
-                       vmax=None,
+                       cmap="gray",
                        shared_scale=True,
-                       show_colorbar=False):
+                       show_colorbar=False,
+                       stretch="asinh",
+                       ref_stage="final",
+                       q_lo=5.0,
+                       q_hi=99.9,
+                       eps=1e-12):
     """
     Visualize intermediate render stages as a 2x4 subplot grid.
 
-    Stages shown (in order):
-      1) empty (zeros)
-      2) sky_e
-      3) stars_e_pre_psf
-      4) stars_e_post_psf
-      5) mean_e
-      6) after_mask_e
-      7) after_jitter_e
-      8) final_e
+    stretch:
+      - "linear": raw values, shared vmin/vmax via percentiles on ref_stage (or per-panel if shared_scale=False)
+      - "percentile": same as linear but just a reminder that scaling is percentile-based
+      - "asinh": astronomy-style stretch; best for huge dynamic range
+      - "log": log10(1 + x/scale); also good but harsher than asinh
 
-    Parameters
-    ----------
-    frame : Frame
-        Used for shape and optional metadata.
-    res : RenderResult
-        Intermediate images stored by render().
-    shared_scale : bool
-        If True, uses a common vmin/vmax across all panels (unless vmin/vmax provided).
-    vmin, vmax : float or None
-        Manual scaling overrides.
+    ref_stage: which panel defines the shared scaling when shared_scale=True.
+      One of: "empty","sky_e","stars_pre_psf","stars_post_psf","mean_e","after_mask","after_jitter","final"
     """
     import numpy as np
     import matplotlib.pyplot as plt
@@ -224,13 +221,59 @@ def plot_render_stages(frame, res, *,
         else:
             arrays.append(arr.astype(np.float32, copy=False))
 
-    if shared_scale and (vmin is None or vmax is None):
-        finite_vals = np.concatenate([a[np.isfinite(a)].ravel() for a in arrays if np.any(np.isfinite(a))])
-        if finite_vals.size > 0:
-            if vmin is None:
-                vmin = float(np.min(finite_vals))
-            if vmax is None:
-                vmax = float(np.max(finite_vals))
+    # --- helper: robust percentiles on finite values ---
+    # --- choose reference scaling (shared dynamic range) ---
+    name_to_idx = {name: i for i, (name, _) in enumerate(panels)}
+    ref_idx = name_to_idx.get(ref_stage, len(panels) - 1)
+    
+    def _pstats(a):
+        a = a[np.isfinite(a)]
+        if a.size == 0:
+            return 0.0, 1.0
+        lo = float(np.percentile(a, q_lo))
+        hi = float(np.percentile(a, q_hi))
+        if not np.isfinite(lo): lo = 0.0
+        if not np.isfinite(hi): hi = lo + 1.0
+        if hi <= lo:
+            hi = lo + 1.0
+        return lo, hi
+    
+    if shared_scale:
+        ref_lo, ref_hi = _pstats(arrays[ref_idx])
+        shared_span = max(ref_hi - ref_lo, eps)   # <- shared "contrast scale"
+    else:
+        shared_span = None
+
+    # --- display transform ---
+    def _transform(a):
+        a = np.asarray(a, dtype=np.float32)
+
+       # IMPORTANT: baseline is per-panel so sky pedestal doesn't zero out star-only panels
+        lo_i, hi_i = _pstats(a)
+        x = a - lo_i
+        x = np.where(np.isfinite(x), x, np.nan)
+        x = np.clip(x, 0.0, None)
+        
+        # scale: shared if requested, otherwise per-panel
+        span = shared_span if (shared_span is not None) else max(hi_i - lo_i, eps)
+        
+        if stretch in ("linear", "percentile"):
+            disp = x
+            vmin, vmax = 0.0, span
+        
+        elif stretch == "asinh":
+            disp = np.arcsinh(x / span)
+            vmin, vmax = 0.0, float(np.arcsinh(1.0))
+        
+        elif stretch == "log":
+            disp = np.log10(1.0 + x / span)
+            vmin, vmax = 0.0, float(np.log10(2.0))
+        
+        else:
+            raise ValueError(f"Unknown stretch='{stretch}'")
+        
+        return disp, vmin, vmax
+
 
     fig, axs = plt.subplots(2, 4, figsize=figsize, constrained_layout=True)
     axs = axs.ravel()
@@ -238,7 +281,13 @@ def plot_render_stages(frame, res, *,
     ims = []
     for k, (name, _) in enumerate(panels):
         ax = axs[k]
-        im = ax.imshow(arrays[k], origin="lower", interpolation="nearest",
+
+        if shared_scale:
+            disp, vmin, vmax = _transform(arrays[k])
+        else:
+            disp, vmin, vmax = _transform(arrays[k], None, None)
+
+        im = ax.imshow(disp, origin="lower", interpolation="nearest",
                        vmin=vmin, vmax=vmax, cmap=cmap, aspect="auto")
         ax.set_aspect("auto", adjustable="box")
         ax.set_title(name)
@@ -247,8 +296,7 @@ def plot_render_stages(frame, res, *,
         ims.append(im)
 
     if show_colorbar:
-        # one shared colorbar using the last image handle
         fig.colorbar(ims[-1], ax=axs.tolist(), fraction=0.02, pad=0.02)
 
-   # return fig, axs
-
+    # return fig, axs
+    

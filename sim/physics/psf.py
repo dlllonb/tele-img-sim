@@ -1,11 +1,56 @@
 # sim/physics/psf.py
 import numpy as np
 
+def _gaussian_kernel(sigma_px: float, radius: int | None = None) -> np.ndarray:
+    """
+    Normalized 2D Gaussian kernel.
+    sigma_px: Gaussian sigma in pixels.
+    radius: half-size in pixels. If None, uses ~4*sigma.
+    """
+    sigma_px = float(sigma_px)
+    if not np.isfinite(sigma_px) or sigma_px <= 0:
+        return np.array([[1.0]], dtype=np.float64)
+
+    if radius is None:
+        radius = int(np.ceil(4.0 * sigma_px))
+    radius = max(1, int(radius))
+
+    y, x = np.mgrid[-radius:radius+1, -radius:radius+1]
+    k = np.exp(-(x*x + y*y) / (2.0 * sigma_px * sigma_px))
+    k /= np.sum(k)
+    return k.astype(np.float64)
+
+def _fft_convolve_same(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    """
+    Linear convolution (zero-padded) via FFT, cropped to 'same' size.
+    """
+    image = np.asarray(image, dtype=np.float64)
+    kernel = np.asarray(kernel, dtype=np.float64)
+
+    ny, nx = image.shape
+    ky, kx = kernel.shape
+
+    # FFT size for linear convolution
+    py = ny + ky - 1
+    px = nx + kx - 1
+
+    F = np.fft.rfft2(image, s=(py, px))
+    K = np.fft.rfft2(kernel, s=(py, px))
+    conv = np.fft.irfft2(F * K, s=(py, px))
+
+    # crop back to same, centered
+    y0 = (ky - 1) // 2
+    x0 = (kx - 1) // 2
+    return conv[y0:y0+ny, x0:x0+nx]
+
 def apply_psf(image_e, frame, cfg):
     """
-    Apply optical PSF to an electron image (float).
-
-    Returns a new float image.
+    Apply a simple Gaussian PSF to an electron image (float).
+    Uses cfg.psf_sigma_px (sigma in pixels). Returns float image.
     """
-    # Stub: no PSF yet
-    return image_e
+    sigma_px = float(getattr(cfg, "psf_sigma_px", 0.0))
+    if sigma_px <= 0.0:
+        return image_e
+
+    kernel = _gaussian_kernel(sigma_px)
+    return _fft_convolve_same(image_e, kernel).astype(np.float32, copy=False)
