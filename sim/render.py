@@ -30,7 +30,7 @@ class RenderConfig:
     read_noise_e: float = 0.0
 
     # --- jitter ---
-    jitter_sigma_px: float = 0.0
+    jitter_pointing_rms: float = 0.0
 
     # --- toggles ---
     enable_sky: bool = True
