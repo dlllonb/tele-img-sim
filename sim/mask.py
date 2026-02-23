@@ -30,9 +30,19 @@ class Mask:
     n_vanes: int = 0                 # e.g. 2 for an "X" (two bars crossing), 4 for "+", etc.
     vane_width_mm: float = 0.0       # physical width of vane in mm (at pupil)
     transmission: float = 0.0        # 0 => opaque vanes; >0 => partially transmissive
+    spike_radius_px: int = 250      # kernel half-size for spider spikes
+    spike_rel_amp: float = 0.10     # relative spike strength vs core
+    spike_falloff: float = 1.6
+    spike_core_px: float =10.0
+    taper_frac: float = 0.2
+    aperture_diam_mm: float = 300
+    obstruction_frac: float = 0.30
+    psf_size_px: float = 513
 
     # --- Grating params (for kind="grating") ---
     lines_per_mm: float = 0.0        # e.g. 100 lines/mm => pitch 0.01 mm
+    order_max: int = 1               # how many orders (±m) to include
+    order_rel_amp: float = 0.12      # amplitude per order relative to central
 
     # --- Bitmap params (for kind="bitmap") ---
     bitmap_path: Optional[str] = None  # path to a pupil transmission bitmap (future)

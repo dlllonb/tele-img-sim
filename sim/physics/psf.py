@@ -1,5 +1,6 @@
 # sim/physics/psf.py
 import numpy as np
+from .masks import kernel_for_mask 
 
 def _gaussian_kernel(sigma_px: float, radius: int | None = None) -> np.ndarray:
     sigma_px = float(sigma_px)
@@ -37,16 +38,17 @@ def apply_psf(image_e, frame, cfg):
     """
     Apply optical PSF to an electron image (float).
 
-    v0: Gaussian PSF only (existing behavior).
-    Mask plumbing: cfg.mask may exist, but is not applied yet.
+    v1: Gaussian PSF plus optional diffraction mask (mask -> kernel dispatch).
     """
-    # --- mask plumbing (no-op for now) ---
-    mask = getattr(cfg, "mask", None)
-    # later: if mask is not None and mask.kind != "none": incorporate diffraction PSF here
-
     sigma_px = float(getattr(cfg, "psf_sigma_px", 0.0))
     if sigma_px <= 0.0:
         return image_e
 
-    kernel = _gaussian_kernel(sigma_px)
+    mask = getattr(cfg, "mask", None)
+
+    if (mask is None) or (getattr(mask, "kind", "none") == "none"):
+        kernel = _gaussian_kernel(sigma_px)
+    else:
+        kernel = kernel_for_mask(frame, cfg, sigma_px, mask)
+
     return _fft_convolve_same(image_e, kernel).astype(np.float32, copy=False)
