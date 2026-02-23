@@ -284,5 +284,5 @@ def plot_render_stages(frame, res, *,
     if show_colorbar:
         fig.colorbar(ims[-1], ax=axs.tolist(), fraction=0.02, pad=0.02)
 
-    # return fig, axs
+    return fig, axs
     

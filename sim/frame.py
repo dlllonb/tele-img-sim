@@ -291,8 +291,8 @@ def display_frame(frame,
 
         say = ax.secondary_yaxis("right", functions=(px_to_dec, dec_to_px))
         say.set_ylabel("Dec (deg)")
-
-   # return fig, ax, im
+    
+    return fig, ax, im
 
 
 def find_star_peaks(image,
