@@ -31,7 +31,7 @@ def apply_noise(image_e, frame, cfg, rng=None):
     shot = rng.poisson(lam).astype(np.float32)
 
     # Read noise (Gaussian)
-    read_sigma = float(getattr(cfg, "read_noise_e", 0.0))
+    read_sigma = float(getattr(frame.camera, "read_noise_e", 0.0))
     if read_sigma > 0.0:
         read = rng.normal(loc=0.0,
                           scale=read_sigma,

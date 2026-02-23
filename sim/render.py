@@ -3,9 +3,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from .frame import Frame
+from .mask import Mask
 from .physics.stars import stars_layer
 from .physics.psf import apply_psf
-from .physics.mask import apply_mask
 from .physics.jitter import apply_jitter
 from .physics.noise import apply_noise
 from .physics.sky import sky_layer
@@ -24,10 +24,8 @@ class RenderConfig:
     band_nm: float = 90.0
 
     # --- optics ---o
+    mask: Mask = Mask()
     psf_sigma_px: float = 1.0
-
-    # --- noise ---
-    read_noise_e: float = 0.0
 
     # --- jitter ---
     jitter_pointing_rms: float = 0.0
@@ -36,7 +34,6 @@ class RenderConfig:
     enable_sky: bool = True
     enable_stars: bool = True
     enable_psf: bool = True
-    enable_mask: bool = True
     enable_jitter: bool = True
     enable_noise: bool = True
 
@@ -51,7 +48,6 @@ class RenderResult:
     stars_e_pre_psf: np.ndarray | None = None
     stars_e_post_psf: np.ndarray | None = None
     mean_e: np.ndarray | None = None
-    after_mask_e: np.ndarray | None = None
     after_jitter_e: np.ndarray | None = None
     final_e: np.ndarray | None = None
 
@@ -79,7 +75,7 @@ def render(frame: Frame,
     stop_after : str or None
         If set, stops after a named stage and writes that stage output into frame.image.
         Valid stage names:
-          "sky", "stars_pre_psf", "psf", "mean", "mask", "jitter", "noise"
+          "sky", "stars_pre_psf", "psf", "mean", "jitter", "noise"
     return_intermediates : bool
         If True, returns (frame, RenderResult). Else returns frame.
 
@@ -137,22 +133,12 @@ def render(frame: Frame,
         frame.image = mean_e
         return (frame, res) if return_intermediates else frame
 
-    # ---- 5) mask diffraction ----
-    if cfg.enable_mask:
-        after_mask = apply_mask(mean_e, frame, cfg)
-    else:
-        after_mask = mean_e
-
-    res.after_mask_e = after_mask
-    if _stop_here(stop_after, "mask"):
-        frame.image = after_mask
-        return (frame, res) if return_intermediates else frame
 
     # ---- 6) jitter blur ----
     if cfg.enable_jitter:
-        after_jitter = apply_jitter(after_mask, frame, cfg)
+        after_jitter = apply_jitter(mean_e, frame, cfg)
     else:
-        after_jitter = after_mask
+        after_jitter = mean_e
 
     res.after_jitter_e = after_jitter
     if _stop_here(stop_after, "jitter"):
@@ -203,12 +189,12 @@ def plot_render_stages(frame, res, *,
     empty = np.zeros((ny, nx), dtype=np.float32)
 
     panels = [
-        ("empty", empty),
+        #("empty", empty),
         ("sky_e", res.sky_e),
         ("stars_pre_psf", res.stars_e_pre_psf),
         ("stars_post_psf", res.stars_e_post_psf),
         ("mean_e", res.mean_e),
-        ("after_mask", res.after_mask_e),
+       # ("after_mask", res.after_mask_e),
         ("after_jitter", res.after_jitter_e),
         ("final", res.final_e),
     ]
@@ -275,7 +261,7 @@ def plot_render_stages(frame, res, *,
         return disp, vmin, vmax
 
 
-    fig, axs = plt.subplots(2, 4, figsize=figsize, constrained_layout=True)
+    fig, axs = plt.subplots(2, 3, figsize=figsize, constrained_layout=True)
     axs = axs.ravel()
 
     ims = []

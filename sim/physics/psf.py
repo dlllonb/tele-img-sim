@@ -2,11 +2,6 @@
 import numpy as np
 
 def _gaussian_kernel(sigma_px: float, radius: int | None = None) -> np.ndarray:
-    """
-    Normalized 2D Gaussian kernel.
-    sigma_px: Gaussian sigma in pixels.
-    radius: half-size in pixels. If None, uses ~4*sigma.
-    """
     sigma_px = float(sigma_px)
     if not np.isfinite(sigma_px) or sigma_px <= 0:
         return np.array([[1.0]], dtype=np.float64)
@@ -21,16 +16,12 @@ def _gaussian_kernel(sigma_px: float, radius: int | None = None) -> np.ndarray:
     return k.astype(np.float64)
 
 def _fft_convolve_same(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-    """
-    Linear convolution (zero-padded) via FFT, cropped to 'same' size.
-    """
     image = np.asarray(image, dtype=np.float64)
     kernel = np.asarray(kernel, dtype=np.float64)
 
     ny, nx = image.shape
     ky, kx = kernel.shape
 
-    # FFT size for linear convolution
     py = ny + ky - 1
     px = nx + kx - 1
 
@@ -38,16 +29,21 @@ def _fft_convolve_same(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
     K = np.fft.rfft2(kernel, s=(py, px))
     conv = np.fft.irfft2(F * K, s=(py, px))
 
-    # crop back to same, centered
     y0 = (ky - 1) // 2
     x0 = (kx - 1) // 2
     return conv[y0:y0+ny, x0:x0+nx]
 
 def apply_psf(image_e, frame, cfg):
     """
-    Apply a simple Gaussian PSF to an electron image (float).
-    Uses cfg.psf_sigma_px (sigma in pixels). Returns float image.
+    Apply optical PSF to an electron image (float).
+
+    v0: Gaussian PSF only (existing behavior).
+    Mask plumbing: cfg.mask may exist, but is not applied yet.
     """
+    # --- mask plumbing (no-op for now) ---
+    mask = getattr(cfg, "mask", None)
+    # later: if mask is not None and mask.kind != "none": incorporate diffraction PSF here
+
     sigma_px = float(getattr(cfg, "psf_sigma_px", 0.0))
     if sigma_px <= 0.0:
         return image_e
