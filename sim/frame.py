@@ -152,6 +152,57 @@ def make_blank_frame(camera: Camera,
     )
 
 
+def _display_transform(img,
+                       *,
+                       stretch="asinh",
+                       vmin=None,
+                       vmax=None,
+                       q_lo=5.0,
+                       q_hi=99.9,
+                       eps=1e-12):
+    """
+    Apply the SAME display transform used by display_frame() to an image array.
+    Returns (disp, dvmin, dvmax, vmin_used, vmax_used).
+    """
+    img = np.asarray(img)
+
+    finite = img[np.isfinite(img)]
+    if finite.size == 0:
+        lo, hi = 0.0, 1.0
+    else:
+        lo = float(np.percentile(finite, q_lo))
+        hi = float(np.percentile(finite, q_hi))
+        if not np.isfinite(lo): lo = 0.0
+        if not np.isfinite(hi): hi = lo + 1.0
+        if hi <= lo: hi = lo + 1.0
+
+    if vmin is None:
+        vmin = lo
+    if vmax is None:
+        vmax = hi
+
+    x = img.astype(np.float32, copy=False)
+    x = x - float(vmin)
+    x = np.where(np.isfinite(x), x, np.nan)
+    x = np.clip(x, 0.0, None)
+
+    span = max(float(vmax) - float(vmin), eps)
+
+    if stretch == "linear":
+        disp = x
+        dvmin, dvmax = 0.0, span
+    elif stretch == "asinh":
+        disp = np.arcsinh(x / span)
+        dvmin, dvmax = 0.0, float(np.arcsinh(1.0))
+    elif stretch == "log":
+        disp = np.log10(1.0 + x / span)
+        dvmin, dvmax = 0.0, float(np.log10(2.0))
+    else:
+        raise ValueError(f"Unknown stretch='{stretch}'")
+
+    return disp.astype(np.float32, copy=False), dvmin, dvmax, float(vmin), float(vmax)
+
+
 def display_frame(frame,
                   ax=None,
                   show_ra_dec=True,
@@ -351,14 +402,18 @@ def plot_star_rois(frame,
                    half_size=40,
                    q=99.95,
                    min_sep_px=60,
-                   stretch="asinh",
                    cmap="gray",
                    show_centroid=True,
                    show_title=True,
-                   # --- NEW: shared scaling across ROIs (to match full-frame look) ---
-                   shared_scale_image=None,     # e.g. res.final_e or res.stars_e_post_psf
-                   shared_q_lo=20.0,
-                   shared_q_hi=99.5,
+                   interpolation="nearest",
+                   # --- NEW: match display_frame scaling exactly ---
+                   stretch="asinh",
+                   q_lo=5.0,
+                   q_hi=99.9,
+                   vmin=None,
+                   vmax=None,
+                   # --- Option: pick which image sets the scaling ---
+                   shared_scale_image=None,
                    eps=1e-12):
     """
     Plot a 2x3 grid of ROIs around bright star peaks.
@@ -422,6 +477,33 @@ def plot_star_rois(frame,
         return peaks
 
     img = frame.image if image is None else np.asarray(image)
+
+    # Use shared_scale_image to derive scaling if provided, otherwise use img.
+    ref = img if shared_scale_image is None else np.asarray(shared_scale_image)
+
+    disp_full, dvmin, dvmax, vmin_used, vmax_used = _display_transform(
+        ref,
+        stretch=stretch,
+        vmin=vmin,
+        vmax=vmax,
+        q_lo=q_lo,
+        q_hi=q_hi,
+        eps=eps,
+    )
+
+    # IMPORTANT: if ref != img, we still need to transform img with the SAME vmin/vmax
+    if shared_scale_image is not None:
+        disp_img, _, _, _, _ = _display_transform(
+            img,
+            stretch=stretch,
+            vmin=vmin_used,
+            vmax=vmax_used,
+            q_lo=q_lo,
+            q_hi=q_hi,
+            eps=eps,
+        )
+    else:
+        disp_img = disp_full
     ny, nx = img.shape
 
     # Try to use your real find_star_peaks if it exists in the global namespace (frame.py import),
@@ -454,38 +536,6 @@ def plot_star_rois(frame,
             if (not np.isfinite(shared_hi)) or (shared_hi <= shared_lo):
                 shared_hi = shared_lo + 1.0
 
-    def _transform_roi(a):
-        a = np.asarray(a, dtype=np.float64)
-        fin = a[np.isfinite(a)]
-        if fin.size == 0:
-            return np.zeros_like(a, dtype=np.float32), 0.0, 1.0
-
-        if shared_lo is None:
-            ped = float(np.percentile(fin, 5.0))
-            x = np.clip(a - ped, 0.0, None)
-            pos = x[np.isfinite(x) & (x > 0)]
-            s = float(np.percentile(pos, 99.9)) if pos.size > 0 else 1.0
-        else:
-            ped = shared_lo
-            x = np.clip(a - ped, 0.0, None)
-            s = float(shared_hi - shared_lo)
-
-        s = max(s, eps)
-
-        if stretch == "linear":
-            disp = x
-            vmin, vmax = 0.0, s
-        elif stretch == "asinh":
-            disp = np.arcsinh(x / s)
-            vmin, vmax = 0.0, float(np.arcsinh(1.0))
-        elif stretch == "log":
-            disp = np.log10(1.0 + x / s)
-            vmin, vmax = 0.0, float(np.log10(2.0))
-        else:
-            raise ValueError(f"Unknown stretch='{stretch}'")
-
-        return disp.astype(np.float32, copy=False), vmin, vmax
-
     # --- plot grid ---
     rows, cols = 2, 3
     fig, axs = plt.subplots(rows, cols, figsize=(12, 7), constrained_layout=True)
@@ -503,10 +553,8 @@ def plot_star_rois(frame,
         x1, x2 = max(0, x0 - half_size), min(nx, x0 + half_size + 1)
         y1, y2 = max(0, y0 - half_size), min(ny, y0 + half_size + 1)
 
-        roi = img[y1:y2, x1:x2]
-        disp, vmin, vmax = _transform_roi(roi)
-
-        ax.imshow(disp, origin="lower", cmap=cmap, interpolation="nearest", vmin=vmin, vmax=vmax)
+        roi_disp = disp_img[y1:y2, x1:x2]
+        ax.imshow(roi_disp, origin="lower", cmap=cmap, interpolation=interpolation, vmin=dvmin, vmax=dvmax)
 
         if show_centroid:
             ax.plot([x0 - x1], [y0 - y1], marker="+", markersize=10)

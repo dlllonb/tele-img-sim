@@ -28,34 +28,106 @@ def kernel_for_mask(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     return _gaussian_kernel(sigma_px)
 
 
+# def _kernel_poppy_newtonian(frame, cfg, sigma_px: float, mask) -> np.ndarray:
+#     # monochromatic version
+
+#     # ---- telescope geometry ----
+#     D = float(getattr(mask, "aperture_diam_mm", 203.2)) * u.mm
+#     D = D.to(u.m) 
+#     obsc_frac = float(getattr(mask, "obstruction_frac", 0.30))
+#     secondary_radius = 0.5 * obsc_frac * D
+
+#     vane_w = float(getattr(mask, "vane_width_mm", 0.76)) * u.mm
+#     n_vanes = int(getattr(mask, "n_vanes", 4))
+#     ang0 = float(getattr(mask, "angle_deg", 0.0))  # degrees
+
+#     # ---- wavelength ----
+#     lam = float(getattr(cfg, "lambda_eff_nm", 550.0)) * u.nm
+
+#     # ---- image sampling: arcsec/px in POPPY ----
+#     # you have plate_scale_rad_per_px already
+#     ps_arcsec = float(frame.plate_scale_rad_per_px) * (180.0 / np.pi) * 3600.0
+
+#     # ---- kernel size ----
+#     npix = int(getattr(mask, "psf_size_px", 513))  # odd is best
+#     # POPPY wants field of view or pixelscale; we’ll set pixelscale and npix.
+#     # (Oversampling can be added later.)
+
+#     osys = poppy.OpticalSystem()
+#     osys.add_pupil(poppy.CircularAperture(radius=0.5 * D))
+
+#     # Secondary obscuration + symmetric supports
+#     osys.add_pupil(
+#         poppy.SecondaryObscuration(
+#             secondary_radius=secondary_radius,
+#             n_supports=n_vanes,
+#             support_width=vane_w,
+#             support_angle_offset=ang0
+#         )
+#     )
+
+#     osys.add_detector(pixelscale=ps_arcsec, fov_pixels=npix)
+
+#     psf_hdul = osys.calc_psf(wavelength=lam)
+#     k = psf_hdul[0].data.astype(np.float64)
+
+#     # normalize energy
+#     s = float(np.sum(k))
+#     if s > 0:
+#         k /= s
+
+#     if sigma_px > 0:
+#         from .psf import _gaussian_kernel
+#         from .psf import _fft_convolve_same
+#         g = _gaussian_kernel(sigma_px, radius=(npix - 1) // 2)
+#         k = _fft_convolve_same(k, g)
+#         s = float(np.sum(k))
+#         if s > 0:
+#             k /= s
+
+#     return k.astype(np.float32, copy=False)
+
+
 def _kernel_poppy_newtonian(frame, cfg, sigma_px: float, mask) -> np.ndarray:
+    # polychromatic implementation
 
     # ---- telescope geometry ----
     D = float(getattr(mask, "aperture_diam_mm", 203.2)) * u.mm
-    D = D.to(u.m) 
-    obsc_frac = float(getattr(mask, "obstruction_frac", 0.30))
-    secondary_radius = 0.5 * obsc_frac * D
+    D = D.to(u.m)
+
+    obsc_frac = float(getattr(mask, "obstruction_frac", 0.0))
+    secondary_radius = 0.5 * obsc_frac * D  # meters
 
     vane_w = float(getattr(mask, "vane_width_mm", 0.76)) * u.mm
     n_vanes = int(getattr(mask, "n_vanes", 4))
     ang0 = float(getattr(mask, "angle_deg", 0.0))  # degrees
 
-    # ---- wavelength ----
-    lam = float(getattr(cfg, "lambda_eff_nm", 550.0)) * u.nm
-
-    # ---- image sampling: arcsec/px in POPPY ----
-    # you have plate_scale_rad_per_px already
+    # ---- sampling: arcsec/px in POPPY ----
     ps_arcsec = float(frame.plate_scale_rad_per_px) * (180.0 / np.pi) * 3600.0
 
     # ---- kernel size ----
     npix = int(getattr(mask, "psf_size_px", 513))  # odd is best
-    # POPPY wants field of view or pixelscale; we’ll set pixelscale and npix.
-    # (Oversampling can be added later.)
 
+    # ---- bandpass ----
+    lam_eff_nm = float(getattr(cfg, "lambda_eff_nm", 550.0))
+    band_nm = float(getattr(cfg, "band_nm", 0.0))  # if 0 -> monochromatic
+    n_lambda = int(getattr(mask, "n_lambda", 9))   # optional knob on mask; default 9
+
+    if band_nm <= 0 or n_lambda <= 1:
+        lam_list_nm = np.array([lam_eff_nm], dtype=float)
+    else:
+        lam0 = lam_eff_nm - 0.5 * band_nm
+        lam1 = lam_eff_nm + 0.5 * band_nm
+        # clamp to something sane for "visible-ish" just in case
+        lam0 = max(lam0, 350.0)
+        lam1 = min(lam1, 750.0)
+        lam_list_nm = np.linspace(lam0, lam1, n_lambda, dtype=float)
+
+    # ---- build optical system once ----
     osys = poppy.OpticalSystem()
     osys.add_pupil(poppy.CircularAperture(radius=0.5 * D))
 
-    # Secondary obscuration + symmetric supports
+    # Central obscuration + symmetric supports (supports work even if secondary_radius=0)
     osys.add_pupil(
         poppy.SecondaryObscuration(
             secondary_radius=secondary_radius,
@@ -67,24 +139,53 @@ def _kernel_poppy_newtonian(frame, cfg, sigma_px: float, mask) -> np.ndarray:
 
     osys.add_detector(pixelscale=ps_arcsec, fov_pixels=npix)
 
-    psf_hdul = osys.calc_psf(wavelength=lam)
-    k = psf_hdul[0].data.astype(np.float64)
+    # ---- polychromatic average ----
+    k_accum = None
+    w_accum = 0.0
 
-    # normalize energy
+    for lam_nm in lam_list_nm:
+        lam = float(lam_nm) * u.nm
+        psf_hdul = osys.calc_psf(wavelength=lam)
+        k = psf_hdul[0].data.astype(np.float64)
+
+        # If POPPY returned a different size than requested, center-crop to npix
+        if k.shape != (npix, npix):
+            ky, kx = k.shape
+            if ky < npix or kx < npix:
+                raise ValueError(f"POPPY PSF smaller than requested: got {k.shape}, want {(npix,npix)}")
+            y0 = (ky - npix) // 2
+            x0 = (kx - npix) // 2
+            k = k[y0:y0+npix, x0:x0+npix]
+
+        # normalize each mono PSF to unit energy before averaging
+        s = float(np.sum(k))
+        if s > 0:
+            k /= s
+
+        if k_accum is None:
+            k_accum = np.zeros_like(k, dtype=np.float64)
+
+        k_accum += k
+        w_accum += 1.0
+
+    k = k_accum / max(w_accum, 1.0)
+
+    # normalize energy again
     s = float(np.sum(k))
     if s > 0:
         k /= s
 
+    # ---- seeing/focus blur on top (same as before) ----
     if sigma_px > 0:
-        from .psf import _gaussian_kernel
-        from .psf import _fft_convolve_same
-        g = _gaussian_kernel(sigma_px, radius=(npix - 1) // 2)
+        from .psf import _gaussian_kernel, _fft_convolve_same
+        g = _gaussian_kernel(float(sigma_px), radius=(npix - 1) // 2)
         k = _fft_convolve_same(k, g)
         s = float(np.sum(k))
         if s > 0:
             k /= s
 
     return k.astype(np.float32, copy=False)
+
 
 
 def _kernel_spider_cross(frame, cfg, sigma_px: float, mask) -> np.ndarray:
