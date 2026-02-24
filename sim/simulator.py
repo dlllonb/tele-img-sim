@@ -61,7 +61,7 @@ def run_sim_and_report(
     zeropoint_e_per_s: float = 0.0,
     lambda_eff_nm: float = 550.0,
     band_nm: float = 90.0,
-    psf_sigma_px: float = 0.6,
+    seeing_fwhm_arcsec: float = 1.5,
     jitter_pointing_rms: float = 16.0,
 
     enable_sky: bool = True,
@@ -148,6 +148,10 @@ def run_sim_and_report(
         psf_size_px=int(mask_psf_size_px),
     )
 
+    # probably shouldn't do this here but its easy for now
+    plate_scale = 206265.0 * (cam.pixel_um / 1000.0) / lens.focal_mm
+    sigma_arcsec = seeing_fwhm_arcsec / 2.355
+    
     # -----------------------
     # RenderConfig
     # -----------------------
@@ -157,8 +161,7 @@ def run_sim_and_report(
         zeropoint_e_per_s=float(zeropoint_e_per_s),
         lambda_eff_nm=float(lambda_eff_nm),
         band_nm=float(band_nm),
-
-        psf_sigma_px=float(psf_sigma_px),
+        psf_sigma_px=float(sigma_arcsec / plate_scale),
         mask=mask,
 
         jitter_pointing_rms=float(jitter_pointing_rms),
