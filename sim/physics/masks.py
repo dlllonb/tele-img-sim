@@ -12,20 +12,157 @@ def kernel_for_mask(frame, cfg, sigma_px: float, mask) -> np.ndarray:
         return _gaussian_kernel(sigma_px)
 
     if kind == "grating":
+        model = getattr(mask, "grating_model", "analytic")
+        if model == "poppy":
+            return _kernel_poppy_grating(frame, cfg, sigma_px, mask)
         return _kernel_grating_orders(frame, cfg, sigma_px, mask)
 
     if kind == "spider":
+        model = getattr(mask, "spider_model", "manual")
+        if model == "poppy":
+            return _kernel_poppy_spider(frame, cfg, sigma_px, mask)
         return _kernel_spider_cross(frame, cfg, sigma_px, mask)
 
     if kind == "bitmap":
         from .psf import _gaussian_kernel
         return _gaussian_kernel(sigma_px)
 
-    if kind in ("pupil", "poppy"):
-        return _kernel_poppy_newtonian(frame, cfg, sigma_px, mask)
-
     from .psf import _gaussian_kernel
     return _gaussian_kernel(sigma_px)
+
+
+def _kernel_poppy_grating(frame, cfg, sigma_px: float, mask) -> np.ndarray:
+    """
+    POPPY amplitude line grating at the entrance pupil.
+    """
+
+    # -----------------------------
+    # Basic geometry
+    # -----------------------------
+    lines_per_mm = float(getattr(mask, "lines_per_mm", 0.0))
+    if lines_per_mm <= 0.0:
+        from .psf import _gaussian_kernel
+        return _gaussian_kernel(sigma_px)
+
+    duty_cycle = float(getattr(mask, "duty_cycle", 0.5))
+    duty_cycle = np.clip(duty_cycle, 0.01, 0.99)
+
+    pupil_samples = int(getattr(mask, "pupil_samples", 512))
+    npix = int(getattr(mask, "psf_size_px", 513))
+
+    # Lens → entrance pupil diameter
+    f_mm = float(frame.lens.focal_mm)
+    fnum = float(frame.lens.f_number)
+    D_mm = f_mm / max(fnum, 1e-6)
+    D = (D_mm * u.mm).to(u.m)
+
+    # -----------------------------
+    # Build pupil transmission array
+    # -----------------------------
+    pitch_mm = 1.0 / lines_per_mm
+    pitch_m = pitch_mm * 1e-3
+
+    # pupil coordinate grid (meters)
+    grid = np.linspace(-0.5, 0.5, pupil_samples)
+    xx, yy = np.meshgrid(grid, grid)
+    r = np.sqrt(xx**2 + yy**2)
+
+    # circular aperture mask
+    pupil_radius = 0.5
+    aperture = (r <= pupil_radius).astype(float)
+
+    # physical coordinate across pupil
+    x_phys = xx * D.value  # meters across pupil
+
+    # rotate grating
+    ang = np.deg2rad(float(getattr(mask, "angle_deg", 0.0)))
+    x_rot = x_phys * np.cos(ang) + (yy * D.value) * np.sin(ang)
+
+    # amplitude stripe transmission
+    phase = np.mod(x_rot / pitch_m, 1.0)
+    stripes = (phase < duty_cycle).astype(float)
+
+    transmission = aperture * stripes
+
+    # POPPY expects "length per pixel" (e.g. meters/pixel)
+    try:
+        pix_unit = u.pixel   # astropy
+    except Exception:
+        pix_unit = u.pix     # some astropy versions use u.pix
+    
+    grating_optic = poppy.ArrayOpticalElement(
+        transmission=transmission,
+        pixelscale=(D / pupil_samples) / pix_unit
+    )
+
+    # -----------------------------
+    # Detector sampling
+    # -----------------------------
+    ps_arcsec = float(frame.plate_scale_rad_per_px) * (180.0 / np.pi) * 3600.0
+
+    # -----------------------------
+    # Bandpass
+    # -----------------------------
+    lam_eff_nm = float(getattr(cfg, "lambda_eff_nm", 550.0))
+    band_nm = float(getattr(cfg, "band_nm", 0.0))
+    n_lambda = int(getattr(mask, "n_lambda", 9))
+
+    if band_nm <= 0 or n_lambda <= 1:
+        lam_list_nm = np.array([lam_eff_nm])
+    else:
+        lam0 = lam_eff_nm - 0.5 * band_nm
+        lam1 = lam_eff_nm + 0.5 * band_nm
+        lam_list_nm = np.linspace(lam0, lam1, n_lambda)
+
+    # -----------------------------
+    # Build optical system
+    # -----------------------------
+    osys = poppy.OpticalSystem()
+    osys.add_pupil(poppy.CircularAperture(radius=0.5 * D))
+    osys.add_pupil(grating_optic)
+    osys.add_detector(pixelscale=ps_arcsec, fov_pixels=npix)
+
+    # -----------------------------
+    # Polychromatic PSF
+    # -----------------------------
+    k_accum = None
+
+    for lam_nm in lam_list_nm:
+        psf_hdul = osys.calc_psf(wavelength=float(lam_nm) * u.nm)
+        k = psf_hdul[0].data.astype(np.float64)
+
+        if k.shape != (npix, npix):
+            ky, kx = k.shape
+            y0 = (ky - npix) // 2
+            x0 = (kx - npix) // 2
+            k = k[y0:y0+npix, x0:x0+npix]
+
+        s = float(np.sum(k))
+        if s > 0:
+            k /= s
+
+        if k_accum is None:
+            k_accum = np.zeros_like(k)
+
+        k_accum += k
+
+    k = k_accum / len(lam_list_nm)
+
+    # normalize again
+    s = float(np.sum(k))
+    if s > 0:
+        k /= s
+
+    # optional Gaussian blur
+    if sigma_px > 0:
+        from .psf import _gaussian_kernel, _fft_convolve_same
+        g = _gaussian_kernel(float(sigma_px), radius=(npix - 1)//2)
+        k = _fft_convolve_same(k, g)
+        s = float(np.sum(k))
+        if s > 0:
+            k /= s
+
+    return k.astype(np.float32, copy=False)
 
 
 # def _kernel_poppy_newtonian(frame, cfg, sigma_px: float, mask) -> np.ndarray:
@@ -88,7 +225,7 @@ def kernel_for_mask(frame, cfg, sigma_px: float, mask) -> np.ndarray:
 #     return k.astype(np.float32, copy=False)
 
 
-def _kernel_poppy_newtonian(frame, cfg, sigma_px: float, mask) -> np.ndarray:
+def _kernel_poppy_spider(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     # polychromatic implementation
 
     # ---- telescope geometry ----
