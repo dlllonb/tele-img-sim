@@ -30,25 +30,33 @@ def kernel_for_mask(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     from .psf import _gaussian_kernel
     return _gaussian_kernel(sigma_px)
 
-
 def _kernel_poppy_grating(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     """
     POPPY amplitude line grating at the entrance pupil.
+
+    Implementation notes:
+      - Builds a *band-limited* duty-cycle grating using a truncated Fourier series
+        (reduces rotated-grid stair-step artifacts that can create spurious directions).
+      - Keeps the user-facing parameters the same: lines_per_mm, duty_cycle, angle_deg.
+      - Optional hidden knob: mask.grating_fourier_terms (default 7).
     """
+    from .psf import _gaussian_kernel
 
     # -----------------------------
-    # Basic geometry
+    # Basic geometry / knobs
     # -----------------------------
     lines_per_mm = float(getattr(mask, "lines_per_mm", 0.0))
-    if lines_per_mm <= 0.0:
-        from .psf import _gaussian_kernel
+    if not np.isfinite(lines_per_mm) or lines_per_mm <= 0.0:
         return _gaussian_kernel(sigma_px)
 
     duty_cycle = float(getattr(mask, "duty_cycle", 0.5))
-    duty_cycle = np.clip(duty_cycle, 0.01, 0.99)
+    duty_cycle = float(np.clip(duty_cycle, 0.01, 0.99))
 
     pupil_samples = int(getattr(mask, "pupil_samples", 512))
+    pupil_samples = max(32, pupil_samples)
+
     npix = int(getattr(mask, "psf_size_px", 513))
+    npix = max(33, npix)
 
     # Lens → entrance pupil diameter
     f_mm = float(frame.lens.focal_mm)
@@ -56,63 +64,93 @@ def _kernel_poppy_grating(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     D_mm = f_mm / max(fnum, 1e-6)
     D = (D_mm * u.mm).to(u.m)
 
+    # Grating pitch
+    pitch_m = (1.0 / lines_per_mm) * 1e-3  # mm -> m
+
+    # Rotation (dispersion axis in sensor coords)
+    ang = np.deg2rad(float(getattr(mask, "angle_deg", 0.0)))
+
+    # Fourier truncation (hidden knob)
+    n_terms = int(getattr(mask, "grating_fourier_terms", 5))
+    n_terms = int(np.clip(n_terms, 1, 51))
+
     # -----------------------------
     # Build pupil transmission array
     # -----------------------------
-    pitch_mm = 1.0 / lines_per_mm
-    pitch_m = pitch_mm * 1e-3
+    # Dimensionless pupil grid in [-0.5, 0.5]
+    grid = np.linspace(-0.5, 0.5, pupil_samples, dtype=np.float64)
+    xx, yy = np.meshgrid(grid, grid, indexing="xy")
+    r = np.hypot(xx, yy)
 
-    # pupil coordinate grid (meters)
-    grid = np.linspace(-0.5, 0.5, pupil_samples)
-    xx, yy = np.meshgrid(grid, grid)
-    r = np.sqrt(xx**2 + yy**2)
+    # Circular aperture in this normalized coord system
+    aperture = (r <= 0.5).astype(np.float64)
 
-    # circular aperture mask
-    pupil_radius = 0.5
-    aperture = (r <= pupil_radius).astype(float)
+    # Physical coordinate across pupil (meters)
+    # xx,yy span [-0.5,0.5] so multiply by D [m] to get meters across diameter
+    x_phys = xx * D.value
+    y_phys = yy * D.value
 
-    # physical coordinate across pupil
-    x_phys = xx * D.value  # meters across pupil
+    # Rotate grating coordinate
+    x_rot = x_phys * np.cos(ang) + y_phys * np.sin(ang)
 
-    # rotate grating
-    ang = np.deg2rad(float(getattr(mask, "angle_deg", 0.0)))
-    x_rot = x_phys * np.cos(ang) + (yy * D.value) * np.sin(ang)
+    # -----------------------------
+    # Band-limited duty-cycle stripes via Fourier series
+    # -----------------------------
+    # uu is dimensionless coordinate in *periods*
+    uu = x_rot / max(pitch_m, 1e-30)
+    two_pi_uu = 2.0 * np.pi * uu
 
-    # amplitude stripe transmission
-    phase = np.mod(x_rot / pitch_m, 1.0)
-    stripes = (phase < duty_cycle).astype(float)
+    # IMPORTANT: stripes must be a 2D array (avoid scalar init -> broadcast errors)
+    stripes = np.full(x_rot.shape, duty_cycle, dtype=np.float64)
+
+    Dd = duty_cycle
+    # Real reconstruction:
+    # stripes(u) = D + sum_{n=1..N} [ (2/(pi*n)) sin(pi*n*D) cos(2*pi*n*u - pi*n*D) ]
+    for n in range(1, n_terms + 1):
+        amp = (2.0 / (np.pi * n)) * np.sin(np.pi * n * Dd)
+        if amp == 0.0:
+            continue
+        stripes = stripes + amp * np.cos(n * two_pi_uu - np.pi * n * Dd)
+
+    # Clamp to [0,1] (truncation can overshoot near edges: Gibbs)
+    stripes = np.clip(stripes, 0.0, 1.0)
 
     transmission = aperture * stripes
 
-    # POPPY expects "length per pixel" (e.g. meters/pixel)
-    try:
-        pix_unit = u.pixel   # astropy
-    except Exception:
-        pix_unit = u.pix     # some astropy versions use u.pix
-    
+    # -----------------------------
+    # POPPY ArrayOpticalElement pixelscale
+    # -----------------------------
+    # POPPY expects pupil-plane pixelscale with units of length/pixel (e.g. m/pix).
+    pix_unit = getattr(u, "pixel", getattr(u, "pix", None))
+    if pix_unit is None:
+        # ultra-paranoid fallback; should not happen in normal astropy
+        pix_unit = u.dimensionless_unscaled
+
+    pupil_pixelscale = (D / float(pupil_samples)) / pix_unit  # -> m/pix
+
     grating_optic = poppy.ArrayOpticalElement(
         transmission=transmission,
-        pixelscale=(D / pupil_samples) / pix_unit
+        pixelscale=pupil_pixelscale,
     )
-
     # -----------------------------
     # Detector sampling
     # -----------------------------
     ps_arcsec = float(frame.plate_scale_rad_per_px) * (180.0 / np.pi) * 3600.0
 
     # -----------------------------
-    # Bandpass
+    # Bandpass sampling
     # -----------------------------
     lam_eff_nm = float(getattr(cfg, "lambda_eff_nm", 550.0))
     band_nm = float(getattr(cfg, "band_nm", 0.0))
     n_lambda = int(getattr(mask, "n_lambda", 9))
+    n_lambda = max(1, n_lambda)
 
-    if band_nm <= 0 or n_lambda <= 1:
-        lam_list_nm = np.array([lam_eff_nm])
+    if (not np.isfinite(band_nm)) or band_nm <= 0.0 or n_lambda <= 1:
+        lam_list_nm = np.array([lam_eff_nm], dtype=np.float64)
     else:
         lam0 = lam_eff_nm - 0.5 * band_nm
         lam1 = lam_eff_nm + 0.5 * band_nm
-        lam_list_nm = np.linspace(lam0, lam1, n_lambda)
+        lam_list_nm = np.linspace(lam0, lam1, n_lambda, dtype=np.float64)
 
     # -----------------------------
     # Build optical system
@@ -123,43 +161,49 @@ def _kernel_poppy_grating(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     osys.add_detector(pixelscale=ps_arcsec, fov_pixels=npix)
 
     # -----------------------------
-    # Polychromatic PSF
+    # Polychromatic PSF (weighted uniform for now)
     # -----------------------------
     k_accum = None
+    w_accum = 0.0
 
     for lam_nm in lam_list_nm:
         psf_hdul = osys.calc_psf(wavelength=float(lam_nm) * u.nm)
         k = psf_hdul[0].data.astype(np.float64)
 
+        # Center-crop if needed
         if k.shape != (npix, npix):
             ky, kx = k.shape
+            if ky < npix or kx < npix:
+                raise ValueError(f"POPPY PSF smaller than requested: got {k.shape}, want {(npix, npix)}")
             y0 = (ky - npix) // 2
             x0 = (kx - npix) // 2
-            k = k[y0:y0+npix, x0:x0+npix]
+            k = k[y0:y0 + npix, x0:x0 + npix]
 
+        # Normalize each mono PSF before averaging
         s = float(np.sum(k))
-        if s > 0:
+        if s > 0.0:
             k /= s
 
         if k_accum is None:
-            k_accum = np.zeros_like(k)
+            k_accum = np.zeros_like(k, dtype=np.float64)
 
         k_accum += k
+        w_accum += 1.0
 
-    k = k_accum / len(lam_list_nm)
+    k = k_accum / max(w_accum, 1.0)
 
-    # normalize again
+    # Normalize again
     s = float(np.sum(k))
-    if s > 0:
+    if s > 0.0:
         k /= s
 
-    # optional Gaussian blur
+    # Optional Gaussian blur on top
     if sigma_px > 0:
-        from .psf import _gaussian_kernel, _fft_convolve_same
-        g = _gaussian_kernel(float(sigma_px), radius=(npix - 1)//2)
+        from .psf import _fft_convolve_same
+        g = _gaussian_kernel(float(sigma_px), radius=(npix - 1) // 2)
         k = _fft_convolve_same(k, g)
         s = float(np.sum(k))
-        if s > 0:
+        if s > 0.0:
             k /= s
 
     return k.astype(np.float32, copy=False)
