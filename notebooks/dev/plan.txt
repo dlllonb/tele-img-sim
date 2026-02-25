@@ -89,3 +89,20 @@ Long-Term Expandability
 
 This document defines the architectural plan for the mini-project and
 serves as context for future development and iteration.
+
+
+
+GAIA QUERY:
+
+SELECT TOP 500000
+  ra  AS ra_deg,
+  dec AS dec_deg,
+  phot_g_mean_mag AS mag
+FROM gaiadr3.gaia_source
+WHERE 1 = CONTAINS(
+  POINT('ICRS', ra, dec),
+  CIRCLE('ICRS', 40.0, 70.0, 15.0)   -- radius_deg = 15 => 30° diameter
+)
+AND phot_g_mean_mag <= 12.0
+AND phot_g_mean_mag IS NOT NULL
+ORDER BY phot_g_mean_mag ASC
