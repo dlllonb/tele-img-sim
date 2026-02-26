@@ -30,6 +30,7 @@ def kernel_for_mask(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     from .psf import _gaussian_kernel
     return _gaussian_kernel(sigma_px)
 
+    
 def _kernel_poppy_grating(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     """
     POPPY amplitude line grating at the entrance pupil.
@@ -209,64 +210,64 @@ def _kernel_poppy_grating(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     return k.astype(np.float32, copy=False)
 
 
-# def _kernel_poppy_newtonian(frame, cfg, sigma_px: float, mask) -> np.ndarray:
-#     # monochromatic version
+def _kernel_poppy_newtonian(frame, cfg, sigma_px: float, mask) -> np.ndarray:
+    # monochromatic version
 
-#     # ---- telescope geometry ----
-#     D = float(getattr(mask, "aperture_diam_mm", 203.2)) * u.mm
-#     D = D.to(u.m) 
-#     obsc_frac = float(getattr(mask, "obstruction_frac", 0.30))
-#     secondary_radius = 0.5 * obsc_frac * D
+    # ---- telescope geometry ----
+    D = float(getattr(mask, "aperture_diam_mm", 203.2)) * u.mm
+    D = D.to(u.m) 
+    obsc_frac = float(getattr(mask, "obstruction_frac", 0.30))
+    secondary_radius = 0.5 * obsc_frac * D
 
-#     vane_w = float(getattr(mask, "vane_width_mm", 0.76)) * u.mm
-#     n_vanes = int(getattr(mask, "n_vanes", 4))
-#     ang0 = float(getattr(mask, "angle_deg", 0.0))  # degrees
+    vane_w = float(getattr(mask, "vane_width_mm", 0.76)) * u.mm
+    n_vanes = int(getattr(mask, "n_vanes", 4))
+    ang0 = float(getattr(mask, "angle_deg", 0.0))  # degrees
 
-#     # ---- wavelength ----
-#     lam = float(getattr(cfg, "lambda_eff_nm", 550.0)) * u.nm
+    # ---- wavelength ----
+    lam = float(getattr(cfg, "lambda_eff_nm", 550.0)) * u.nm
 
-#     # ---- image sampling: arcsec/px in POPPY ----
-#     # you have plate_scale_rad_per_px already
-#     ps_arcsec = float(frame.plate_scale_rad_per_px) * (180.0 / np.pi) * 3600.0
+    # ---- image sampling: arcsec/px in POPPY ----
+    # you have plate_scale_rad_per_px already
+    ps_arcsec = float(frame.plate_scale_rad_per_px) * (180.0 / np.pi) * 3600.0
 
-#     # ---- kernel size ----
-#     npix = int(getattr(mask, "psf_size_px", 513))  # odd is best
-#     # POPPY wants field of view or pixelscale; we’ll set pixelscale and npix.
-#     # (Oversampling can be added later.)
+    # ---- kernel size ----
+    npix = int(getattr(mask, "psf_size_px", 513))  # odd is best
+    # POPPY wants field of view or pixelscale; we’ll set pixelscale and npix.
+    # (Oversampling can be added later.)
 
-#     osys = poppy.OpticalSystem()
-#     osys.add_pupil(poppy.CircularAperture(radius=0.5 * D))
+    osys = poppy.OpticalSystem()
+    osys.add_pupil(poppy.CircularAperture(radius=0.5 * D))
 
-#     # Secondary obscuration + symmetric supports
-#     osys.add_pupil(
-#         poppy.SecondaryObscuration(
-#             secondary_radius=secondary_radius,
-#             n_supports=n_vanes,
-#             support_width=vane_w,
-#             support_angle_offset=ang0
-#         )
-#     )
+    # Secondary obscuration + symmetric supports
+    osys.add_pupil(
+        poppy.SecondaryObscuration(
+            secondary_radius=secondary_radius,
+            n_supports=n_vanes,
+            support_width=vane_w,
+            support_angle_offset=ang0
+        )
+    )
 
-#     osys.add_detector(pixelscale=ps_arcsec, fov_pixels=npix)
+    osys.add_detector(pixelscale=ps_arcsec, fov_pixels=npix)
 
-#     psf_hdul = osys.calc_psf(wavelength=lam)
-#     k = psf_hdul[0].data.astype(np.float64)
+    psf_hdul = osys.calc_psf(wavelength=lam)
+    k = psf_hdul[0].data.astype(np.float64)
 
-#     # normalize energy
-#     s = float(np.sum(k))
-#     if s > 0:
-#         k /= s
+    # normalize energy
+    s = float(np.sum(k))
+    if s > 0:
+        k /= s
 
-#     if sigma_px > 0:
-#         from .psf import _gaussian_kernel
-#         from .psf import _fft_convolve_same
-#         g = _gaussian_kernel(sigma_px, radius=(npix - 1) // 2)
-#         k = _fft_convolve_same(k, g)
-#         s = float(np.sum(k))
-#         if s > 0:
-#             k /= s
+    if sigma_px > 0:
+        from .psf import _gaussian_kernel
+        from .psf import _fft_convolve_same
+        g = _gaussian_kernel(sigma_px, radius=(npix - 1) // 2)
+        k = _fft_convolve_same(k, g)
+        s = float(np.sum(k))
+        if s > 0:
+            k /= s
 
-#     return k.astype(np.float32, copy=False)
+    return k.astype(np.float32, copy=False)
 
 
 def _kernel_poppy_spider(frame, cfg, sigma_px: float, mask) -> np.ndarray:
