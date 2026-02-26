@@ -90,10 +90,12 @@ def render(frame: Frame,
 
     # ---- 1) sky layer (electrons) ----
     if cfg.enable_sky:
-        if getattr(cfg, "sky_e_per_px_s", 0.0) and cfg.sky_e_per_px_s > 0.0:
-            sky_rate = float(cfg.sky_e_per_px_s)
-        else:
-            sky_rate = sky_layer(frame, cfg)
+        # this clause was causing a bug, and should be cleaned up later!!
+        # if getattr(cfg, "sky_e_per_px_s", 0.0) and cfg.sky_e_per_px_s > 0.0:
+        #     sky_rate = float(cfg.sky_e_per_px_s)
+        #     print("here")
+        # else:
+        sky_rate = sky_layer(frame, cfg)
     
         sky_e = np.full((ny, nx), sky_rate * cfg.exposure_s, dtype=np.float32)
     else:
