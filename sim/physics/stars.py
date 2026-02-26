@@ -24,6 +24,14 @@ class StarField:
 
 def load_star_field(path: str | Path) -> StarField:
     path = Path(path)
+
+    # If relative, interpret relative to project root (folder containing "sim")
+    if not path.is_absolute():
+        here = Path(__file__).resolve()
+        root = next((p for p in (here, *here.parents) if (p / "sim").is_dir()), None)
+        if root is not None:
+            path = root / path
+
     if not path.exists():
         raise FileNotFoundError(f"Star field file not found: {path}")
 
