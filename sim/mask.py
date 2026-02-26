@@ -49,7 +49,13 @@ class Mask:
     # poppy amplitude grating knobs
     duty_cycle: float = 0.5          # open fraction (0..1)
     pupil_samples: int = 512         # sampling of pupil array
-    n_lambda: int = 9                # polychromatic samples
+    n_lambda: int = 15               # polychromatic samples (depreciated)
+    # Grating smear controls
+    segment_smear: bool = True
+    smear_step_px: float = 0.75
+    smear_cap: int = 250
+    smear_profile: str = "raised_cosine"
+    
 
     # --- Bitmap params (for kind="bitmap") ---
     bitmap_path: Optional[str] = None  # path to a pupil transmission bitmap (future)
