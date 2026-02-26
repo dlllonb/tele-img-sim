@@ -42,16 +42,30 @@ def run_sim_and_report(
     lens_f_number: float = 1.8,
     lens_transmission: float = 0.9,
 
+    mask_kind: str = "none",
+    
     # -----------------------
     # Mask (POPPY spider)
     # -----------------------
-    mask_kind: str = "poppy",
+    mask_spider_model: str = "manual",      # "manual" | "poppy"
     mask_angle_deg: float = 12.0,
     mask_n_vanes: int = 2,
     mask_vane_width_mm: float = 0.6,
     mask_obstruction_frac: float = 0.0,
     mask_psf_size_px: int = 300,
     mask_aperture_diam_mm: Optional[float] = None,  # if None, uses f/f#
+
+    # -----------------------
+    # Mask (Grating knobs)
+    # -----------------------
+    mask_grating_model: str = "analytic",   # "analytic" | "poppy"
+    mask_lines_per_mm: float = 0.0,
+    mask_order_max: int = 1,
+    mask_order_rel_amp: float = 0.12,
+
+    mask_duty_cycle: float = 0.5,
+    mask_pupil_samples: int = 512,
+    mask_n_lambda: int = 9,
 
     # -----------------------
     # Render config
@@ -140,12 +154,28 @@ def run_sim_and_report(
 
     mask = Mask(
         kind=mask_kind,
-        aperture_diam_mm=mask_ap_diam,
-        obstruction_frac=float(mask_obstruction_frac),
-        vane_width_mm=float(mask_vane_width_mm),
-        n_vanes=int(mask_n_vanes),
+    
+        # common
         angle_deg=float(mask_angle_deg),
         psf_size_px=int(mask_psf_size_px),
+    
+        # aperture-ish (used by poppy paths; safe for others)
+        aperture_diam_mm=float(mask_ap_diam),
+        obstruction_frac=float(mask_obstruction_frac),
+    
+        # spider params
+        vane_width_mm=float(mask_vane_width_mm),
+        n_vanes=int(mask_n_vanes),
+    
+        # grating params
+        lines_per_mm=float(mask_lines_per_mm),
+        grating_model=str(mask_grating_model),
+        order_max=int(mask_order_max),
+        order_rel_amp=float(mask_order_rel_amp),
+    
+        duty_cycle=float(mask_duty_cycle),
+        pupil_samples=int(mask_pupil_samples),
+        n_lambda=int(mask_n_lambda),
     )
 
     # probably shouldn't do this here but its easy for now
