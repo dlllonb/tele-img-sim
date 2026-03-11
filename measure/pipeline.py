@@ -117,11 +117,23 @@ def run_measurement_pipeline(
     if show:
         try:
             import matplotlib.pyplot as plt
+
+            def _display_with_percentile(ax, img, title, qlo=0.5, qhi=99.5):
+                # compute robust limits
+                finite = img[np.isfinite(img)]
+                if finite.size > 0:
+                    vmin = float(np.percentile(finite, qlo))
+                    vmax = float(np.percentile(finite, qhi))
+                else:
+                    vmin, vmax = 0.0, 1.0
+                if verbose:
+                    messages.append(f"{title} display vmin={vmin:.3g} vmax={vmax:.3g}")
+                ax.imshow(img, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
+                ax.set_title(title)
+
             fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-            ax[0].imshow(star_branch.image, origin="lower", cmap="gray")
-            ax[0].set_title("star branch")
-            ax[1].imshow(stripe_branch.image, origin="lower", cmap="gray")
-            ax[1].set_title("stripe branch")
+            _display_with_percentile(ax[0], star_branch.image, "star branch")
+            _display_with_percentile(ax[1], stripe_branch.image, "stripe branch")
             plt.show()
         except ImportError:
             messages.append("matplotlib not available; cannot show images")

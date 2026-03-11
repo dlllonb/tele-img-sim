@@ -54,16 +54,69 @@ def write_branch_fits(
 
 def write_summary(result: "MeasurementResult", runpath: Path) -> Path:
     """Dump a machine-readable JSON summary and a human text log."""
-    summary = {
-        "input": result.input_data.filepath,
+    # core information
+    summary: Dict[str, Any] = {
+        "input_filepath": result.input_data.filepath,
+        "timestamp": datetime.utcnow().isoformat(),
+        "image_shape": None,
         "success": result.success,
-        "metrics": {
-            "sky_angle_deg": result.metrics.sky_angle_deg,
-            "final_sigma_deg": result.metrics.final_sigma_deg,
-        },
         "paths": result.output_paths,
-        "messages": result.messages,
     }
+
+    # image shape if available
+    try:
+        summary["image_shape"] = tuple(result.input_data.image.shape)
+    except Exception:
+        pass
+
+    # metadata fields of interest
+    md = result.input_data.meta
+    summary["metadata"] = {
+        "ra_deg": md.ra_deg,
+        "dec_deg": md.dec_deg,
+        "rot_deg": md.rot_deg,
+        "plate_scale_arcsec_px": md.plate_scale_arcsec_per_px,
+        "exposure_s": md.exposure_s,
+        "focal_length_mm": md.focal_length_mm,
+        "f_number": md.f_number,
+        "pixel_size_um": md.pixel_size_um,
+        "grating_lines_per_mm": md.grating_lines_per_mm,
+        "mask_angle_deg": md.mask_angle_deg,
+    }
+
+    # platesolve results
+    pr = result.platesolve_result
+    summary["platesolve"] = {
+        "success": pr.success,
+        "ra_deg": pr.ra_deg,
+        "dec_deg": pr.dec_deg,
+        "rot_deg": pr.rot_deg,
+    }
+
+    # stripe measurement results
+    sr = result.spike_result
+    summary["stripe"] = {
+        "success": sr.success,
+        "image_angle_deg": sr.image_angle_deg,
+        "sigma_angle_deg": sr.sigma_angle_deg,
+    }
+
+    # derived metrics
+    summary["metrics"] = {
+        "sky_angle_deg": result.metrics.sky_angle_deg,
+        "final_sigma_deg": result.metrics.final_sigma_deg,
+        "quality_flags": result.metrics.quality_flags,
+    }
+
+    # diagnostics placeholders
+    summary["diagnostics"] = {
+        "n_detected_stars": None,
+        "n_used_for_solve": None,
+        "n_stripe_features": None,
+    }
+
+    # messages/log
+    summary["messages"] = result.messages
     jpath = runpath / "summary.json"
     with open(jpath, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
