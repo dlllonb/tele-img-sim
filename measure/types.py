@@ -131,6 +131,17 @@ class MeasurementInput:
 
 
 @dataclass
+class BranchImageResult:
+    """Generic result container for a preprocessing branch."""
+    success: bool = False
+    branch_name: str = ""
+    image: Optional[np.ndarray] = None
+    header_updates: Dict[str, Any] = field(default_factory=dict)
+    messages: List[str] = field(default_factory=list)
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class StarDetectionResult:
     success: bool = False
     n_stars_detected: int = 0
@@ -146,38 +157,59 @@ class PlateSolveResult:
     ra_deg: Optional[float] = None
     dec_deg: Optional[float] = None
     rot_deg: Optional[float] = None
-    wcs: Any = None  # placeholder for a WCS object or dict
-    extra: Dict[str, Any] = field(default_factory=dict)
+    wcs_info: Any = None  # placeholder for a WCS object or dict
+    messages: List[str] = field(default_factory=list)
+    debug: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class SpikeMeasurementResult:
     success: bool = False
-    angle_deg: Optional[float] = None
+    image_angle_deg: Optional[float] = None
     sigma_angle_deg: Optional[float] = None
     feature_type: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
+    messages: List[str] = field(default_factory=list)
+    debug: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class MeasurementMetrics:
     solve_success: bool = False
-    spike_success: bool = False
-    final_angle_deg: Optional[float] = None
+    stripe_success: bool = False
+
+    # raw values
+    image_angle_deg: Optional[float] = None          # measured in image frame
+    astrometric_rot_deg: Optional[float] = None     # from platesolve
+
+    # derived
+    sky_angle_deg: Optional[float] = None           # final polarization orientation
     final_sigma_deg: Optional[float] = None
+
     quality_flags: List[str] = field(default_factory=list)
-    extra: Dict[str, Any] = field(default_factory=dict)
+    messages: List[str] = field(default_factory=list)
+    debug: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class MeasurementResult:
     input_data: MeasurementInput
-    star_result: StarDetectionResult
+    star_branch: BranchImageResult
+    stripe_branch: BranchImageResult
     platesolve_result: PlateSolveResult
     spike_result: SpikeMeasurementResult
     metrics: MeasurementMetrics
+
     success: bool = False
     messages: List[str] = field(default_factory=list)
+    output_paths: Dict[str, str] = field(default_factory=dict)
+    intermediates: Dict[str, Any] = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        return (
+            f"MeasurementResult(success={self.success}, "
+            f"solve={self.platesolve_result.success}, "
+            f"stripe={self.spike_result.success})"
+        )
 
     def __repr__(self) -> str:
         return (

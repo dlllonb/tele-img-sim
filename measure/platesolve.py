@@ -4,26 +4,38 @@
 from __future__ import annotations
 from typing import Any
 
-from .types import MeasurementInput, StarDetectionResult, PlateSolveResult
+from .types import BranchImageResult, MeasurementMetadata, PlateSolveResult
 
 
 def run_platesolve(
-    inp: MeasurementInput,
-    star_res: StarDetectionResult,
+    branch: BranchImageResult,
+    meta: MeasurementMetadata,
 ) -> PlateSolveResult:
-    """Stub platesolver.
+    """Placeholder platesolve operating on a preprocessed star branch image.
 
-    A future implementation would call an external solver (e.g. astrometry.net)
-    or a local library, providing detected star positions to derive a WCS and
-    astrometric pointing/rotation.
+    Parameters
+    ----------
+    branch : BranchImageResult
+        Preprocessed image intended for astrometry/plate solving.
+    meta : MeasurementMetadata
+        Normalized metadata from the FITS header.
 
-    This placeholder echoes metadata RA/Dec/rot if available, and otherwise
-    returns a mostly-empty result.
+    Returns
+    -------
+    PlateSolveResult
+        Stub result; currently not a real solve.
+
+    The stub behaviour is explicit: success is False and the result contains
+    a message indicating that no platesolver backend is configured.  If
+    the header provided RA/Dec/rot, the stub will echo them but will still
+    mark success=False to emphasise that this is not a real solution.
     """
     res = PlateSolveResult()
-    if inp.meta.ra_deg is not None:
-        res.success = True
-        res.ra_deg = inp.meta.ra_deg
-        res.dec_deg = inp.meta.dec_deg
-        res.rot_deg = inp.meta.rot_deg
+    res.messages.append("platesolve stub invoked; no backend implemented")
+    if meta.ra_deg is not None:
+        res.ra_deg = meta.ra_deg
+        res.dec_deg = meta.dec_deg
+        res.rot_deg = meta.rot_deg
+        res.messages.append("echoed header RA/Dec/rot into result (stub)")
+    # success remains False until a real solver is hooked up
     return res

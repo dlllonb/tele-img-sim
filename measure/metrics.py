@@ -4,33 +4,43 @@
 from __future__ import annotations
 
 from .types import (
-    MeasurementInput,
-    StarDetectionResult,
+    MeasurementMetadata,
     PlateSolveResult,
     SpikeMeasurementResult,
     MeasurementMetrics,
 )
 
 
-def compute_measurement_metrics(
-    inp: MeasurementInput,
-    star_res: StarDetectionResult,
+def compute_metrics(
     plate_res: PlateSolveResult,
     spike_res: SpikeMeasurementResult,
+    meta: MeasurementMetadata,
 ) -> MeasurementMetrics:
-    """Stub metrics computation.
+    """Combine branch results into final science-facing metrics.
 
-    Real version will combine uncertainty estimates from each stage and
-    produce final polarization angle uncertainty, success rates, etc.
+    The primary task of this stage is to translate an image-frame
+    diffraction angle into a sky-frame orientation using the astrometric
+    rotation recovered by the platesolver.  Even though both inputs are
+    currently stubs, we set up the fields to enable that calculation.
     """
     metrics = MeasurementMetrics()
     metrics.solve_success = bool(plate_res.success)
-    metrics.spike_success = bool(spike_res.success)
-    # placeholder: propagate spike angle if available
-    metrics.final_angle_deg = spike_res.angle_deg
-    metrics.final_sigma_deg = spike_res.sigma_angle_deg
+    metrics.stripe_success = bool(spike_res.success)
+
+    # copy raw values
+    metrics.image_angle_deg = spike_res.image_angle_deg
+    metrics.astrometric_rot_deg = plate_res.rot_deg
+
+    if metrics.image_angle_deg is not None and metrics.astrometric_rot_deg is not None:
+        # simple placeholder combination: add rotation to image angle
+        metrics.sky_angle_deg = metrics.image_angle_deg + metrics.astrometric_rot_deg
+        metrics.messages.append("computed sky_angle_deg by adding rotation (stub)")
+    else:
+        metrics.messages.append("could not compute sky_angle_deg; missing inputs")
+
     if not metrics.solve_success:
         metrics.quality_flags.append("platesolve_failed")
-    if not metrics.spike_success:
-        metrics.quality_flags.append("spike_failed")
+    if not metrics.stripe_success:
+        metrics.quality_flags.append("stripe_failed")
+
     return metrics

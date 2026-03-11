@@ -5,29 +5,36 @@ from __future__ import annotations
 import numpy as np
 
 from .types import (
-    MeasurementInput,
-    StarDetectionResult,
+    BranchImageResult,
+    MeasurementMetadata,
     PlateSolveResult,
     SpikeMeasurementResult,
 )
 
 
-def measure_spike_angle(
-    inp: MeasurementInput,
-    star_res: StarDetectionResult,
-    plate_res: PlateSolveResult,
+def measure_diffraction_angle(
+    branch: BranchImageResult,
+    meta: MeasurementMetadata,
 ) -> SpikeMeasurementResult:
-    """Stub spike/feature orientation measurement.
+    """Stub diffraction orientation measurement on stripe branch image.
 
-    The real function will analyze `inp.image` (optionally using the
-    star/plate results to mask out stars or transform coordinates) and
-    return the best-fit diffraction orientation and uncertainty.
+    Parameters
+    ----------
+    branch : BranchImageResult
+        Preprocessed image optimized for stripe detection.
+    meta : MeasurementMetadata
+        Normalized metadata; may contain mask angle hints.
 
-    Here we simply return a placeholder that echos the mask angle from
-    metadata if available.
+    Returns
+    -------
+    SpikeMeasurementResult
+        Stub result.  Currently success=False and image_angle_deg set
+        only if metadata contains a mask angle, as a placeholder.
     """
     res = SpikeMeasurementResult()
-    res.success = True
-    if inp.meta.mask_angle_deg is not None:
-        res.angle_deg = inp.meta.mask_angle_deg
+    res.messages.append("diffraction-angle stub invoked; no real fit performed")
+    if meta.mask_angle_deg is not None:
+        res.image_angle_deg = meta.mask_angle_deg
+        res.messages.append("echoed mask_angle_deg from metadata (stub)")
+    # success left False to remind user this is not a measurement
     return res
