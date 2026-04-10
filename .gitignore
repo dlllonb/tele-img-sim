@@ -19,3 +19,4 @@ data/
 out/
 sim/physics/starfields/field3.csv
 CLAUDE.md
+.claude/

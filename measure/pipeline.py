@@ -143,7 +143,8 @@ def run_measurement_pipeline(
     messages.append("platesolve stage completed")
 
     # 4. stripe measurement
-    spike_res = measure_diffraction_angle(stripe_branch, meta)
+    spike_res = measure_diffraction_angle(stripe_branch, meta,
+                                          save_dir=runpath, show=show)
     messages.append("diffraction angle stage completed")
 
     # 5. metrics

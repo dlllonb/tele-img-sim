@@ -2,15 +2,13 @@
 # utilities for FITS I/O and output directory management
 
 from __future__ import annotations
-import os
 from pathlib import Path
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from .types import BranchImageResult, MeasurementResult
 
-import numpy as np
 from astropy.io import fits
 
 
@@ -19,7 +17,7 @@ def make_run_dir(output_dir: str, run_name: Optional[str], input_filepath: str) 
     outroot.mkdir(parents=True, exist_ok=True)
     if run_name is None:
         stem = Path(input_filepath).stem
-        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         run_name = f"{stem}_{timestamp}"
     runpath = outroot / run_name
     runpath.mkdir(parents=True, exist_ok=True)
@@ -41,7 +39,7 @@ def write_branch_fits(
     hdr["HIERARCH"] = True  # allow long keys
     hdr["BRANCH"] = branch.branch_name
     hdr["PROVENIN"] = orig_header.get("FILENAME", "?")
-    hdr["DATE"] = datetime.utcnow().isoformat()
+    hdr["DATE"] = datetime.now(timezone.utc).isoformat()
     # add any header updates
     for k, v in branch.header_updates.items():
         try:
@@ -57,7 +55,7 @@ def write_summary(result: "MeasurementResult", runpath: Path) -> Path:
     # core information
     summary: Dict[str, Any] = {
         "input_filepath": result.input_data.filepath,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "image_shape": None,
         "success": result.success,
         "paths": result.output_paths,
@@ -97,8 +95,14 @@ def write_summary(result: "MeasurementResult", runpath: Path) -> Path:
     sr = result.spike_result
     summary["stripe"] = {
         "success": sr.success,
-        "image_angle_deg": sr.image_angle_deg,
-        "sigma_angle_deg": sr.sigma_angle_deg,
+        "consensus_angle_deg": sr.image_angle_deg,
+        "consensus_sigma_deg": sr.sigma_angle_deg,
+        "radon_angle_deg": sr.radon_angle_deg,
+        "radon_sigma_deg": sr.radon_sigma_deg,
+        "hough_angle_deg": sr.hough_angle_deg,
+        "hough_sigma_deg": sr.hough_sigma_deg,
+        "fourier_angle_deg": sr.fourier_angle_deg,
+        "fourier_sigma_deg": sr.fourier_sigma_deg,
     }
 
     # derived metrics
