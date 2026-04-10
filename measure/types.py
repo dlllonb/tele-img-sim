@@ -210,11 +210,3 @@ class MeasurementResult:
             f"solve={self.platesolve_result.success}, "
             f"stripe={self.spike_result.success})"
         )
-
-    def __repr__(self) -> str:
-        return (
-            f"MeasurementResult(success={self.success}, "
-            f"stars={self.star_result.n_stars_detected}, "
-            f"solve={self.platesolve_result.success}, "
-            f"spike={self.spike_result.success})"
-        )
