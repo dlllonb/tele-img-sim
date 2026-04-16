@@ -165,7 +165,9 @@ def prepare_angle_feature_image(
     ridge_response = _enhance_ridges(bg_subtracted, sigmas=ridge_sigmas)
     soft_mask = _make_soft_mask(img.shape, roi_fraction=roi_fraction,
                                 apodize_frac=apodize_frac)
-    feature_img = (ridge_response * soft_mask).astype(np.float32)
+    
+    #feature_img = (ridge_response * soft_mask).astype(np.float32)
+    feature_img = bg_subtracted 
 
     debug_info = {
         "downsampled":     img,
@@ -338,6 +340,61 @@ def _weighted_angle_sigma(
     w = w / (w.sum() + 1e-10)
     return float(np.sqrt(np.dot(w, diffs ** 2)))
 
+def _wrap_angle_diff_deg(angle_deg: float, ref_deg: float) -> float:
+    """Return wrapped axial angle difference in (-90, 90] degrees."""
+    return float((angle_deg - ref_deg + 90.0) % 180.0 - 90.0)
+
+
+def _sigma_clip_angle_candidates(
+    accepted: List[Dict[str, Any]],
+    sigma_clip: float = 2.5,
+    max_iter: int = 3,
+    min_keep: int = 3,
+) -> List[Dict[str, Any]]:
+    """Iteratively sigma-clip accepted candidates in angle space.
+
+    Uses the current weighted axial mean as the center and the weighted
+    angular sigma as the scale. Candidates with |delta_angle| > sigma_clip*sigma
+    are removed. Stops when convergence is reached or max_iter is hit.
+
+    Parameters
+    ----------
+    accepted   : candidates already passed morphology filtering
+    sigma_clip : clipping threshold in units of sigma
+    max_iter   : maximum number of clipping iterations
+    min_keep   : minimum number of candidates to retain; if clipping would
+                 drop below this, stop and keep current set
+    """
+    kept = list(accepted)
+
+    for _ in range(max_iter):
+        if len(kept) < min_keep:
+            break
+
+        angles = [c["angle_deg"] for c in kept]
+        weights = [_candidate_weight(c) for c in kept]
+
+        mean_angle, _ = _weighted_axial_mean(angles, weights)
+        sigma = _weighted_angle_sigma(angles, weights, mean_angle)
+
+        # protect against sigma collapsing to ~0
+        sigma_eff = max(sigma, 0.5)
+
+        new_kept = []
+        for c in kept:
+            dtheta = abs(_wrap_angle_diff_deg(c["angle_deg"], mean_angle))
+            if dtheta <= sigma_clip * sigma_eff:
+                new_kept.append(c)
+
+        # stop if no change or clipping would be too aggressive
+        if len(new_kept) == len(kept):
+            break
+        if len(new_kept) < min_keep:
+            break
+
+        kept = new_kept
+
+    return kept
 
 def measure_ensemble_lines(
     feature_img: np.ndarray,
@@ -346,6 +403,8 @@ def measure_ensemble_lines(
     min_major_length: float = 15.0,
     min_eccentricity: float = 0.85,
     min_accepted: int = 2,
+    sigma_clip: Optional[float] = 2.5,
+    clip_max_iter: int = 3,
 ) -> AngleEstimate:
     """Estimate stripe angle from an ensemble of locally-fitted line segments.
 
@@ -366,6 +425,14 @@ def measure_ensemble_lines(
     accepted = _filter_candidates(
         candidates, min_major_length=min_major_length,
         min_eccentricity=min_eccentricity)
+    
+    if sigma_clip is not None and len(accepted) >= max(min_accepted, 3):
+        accepted = _sigma_clip_angle_candidates(
+            accepted,
+            sigma_clip=sigma_clip,
+            max_iter=clip_max_iter,
+            min_keep=max(min_accepted, 3),
+        )
 
     n_det = len(candidates)
     n_acc = len(accepted)
@@ -395,6 +462,8 @@ def _run_ensemble(
     min_major_length: float = 15.0,
     min_eccentricity: float = 0.85,
     min_accepted: int = 2,
+    sigma_clip: Optional[float] = 2.5,
+    clip_max_iter: int = 3,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], AngleEstimate]:
     """Extract + filter + fit: return (all_candidates, accepted, estimate).
 
@@ -406,6 +475,14 @@ def _run_ensemble(
     accepted = _filter_candidates(
         candidates, min_major_length=min_major_length,
         min_eccentricity=min_eccentricity)
+    
+    if sigma_clip is not None and len(accepted) >= max(min_accepted, 3):
+        accepted = _sigma_clip_angle_candidates(
+            accepted,
+            sigma_clip=sigma_clip,
+            max_iter=clip_max_iter,
+            min_keep=max(min_accepted, 3),
+        )
 
     n_acc = len(accepted)
     if n_acc < min_accepted:
@@ -430,6 +507,8 @@ def show_ensemble_debug(
     min_pixels: int = 30,
     min_major_length: float = 15.0,
     min_eccentricity: float = 0.85,
+    sigma_clip: Optional[float] = 2.5,
+    clip_max_iter: int = 3,
 ) -> None:
     """Display ensemble debug output as separate figures:
 
@@ -447,12 +526,16 @@ def show_ensemble_debug(
     # --- recompute debug artifacts ---
     candidates, label_img = _extract_candidates(
         feature_img, threshold_pct=threshold_pct, min_pixels=min_pixels)
-    accepted = _filter_candidates(
-        candidates, min_major_length=min_major_length,
-        min_eccentricity=min_eccentricity)
-    est = measure_ensemble_lines(
-        feature_img, threshold_pct=threshold_pct, min_pixels=min_pixels,
-        min_major_length=min_major_length, min_eccentricity=min_eccentricity)
+
+    _, accepted, est = _run_ensemble(
+        feature_img,
+        threshold_pct=threshold_pct,
+        min_pixels=min_pixels,
+        min_major_length=min_major_length,
+        min_eccentricity=min_eccentricity,
+        sigma_clip=sigma_clip,
+        clip_max_iter=clip_max_iter,
+    )
 
     angle_cmap = cm.get_cmap("hsv")
     def angle_color(a_deg):
