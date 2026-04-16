@@ -386,6 +386,40 @@ def measure_ensemble_lines(
     return AngleEstimate(mean_angle, sigma, quality, valid, "ensemble")
 
 
+# ── internal full-run helper ───────────────────────────────────────────────────
+
+def _run_ensemble(
+    feature_img: np.ndarray,
+    threshold_pct: float = 75.0,
+    min_pixels: int = 30,
+    min_major_length: float = 15.0,
+    min_eccentricity: float = 0.85,
+    min_accepted: int = 2,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], AngleEstimate]:
+    """Extract + filter + fit: return (all_candidates, accepted, estimate).
+
+    Used by sweep and field-analysis functions so we don't repeat the
+    extraction logic.  Public API stays measure_ensemble_lines().
+    """
+    candidates, _ = _extract_candidates(
+        feature_img, threshold_pct=threshold_pct, min_pixels=min_pixels)
+    accepted = _filter_candidates(
+        candidates, min_major_length=min_major_length,
+        min_eccentricity=min_eccentricity)
+
+    n_acc = len(accepted)
+    if n_acc < min_accepted:
+        return candidates, accepted, AngleEstimate(0.0, 180.0, 0.0, False, "ensemble")
+
+    angles  = [c["angle_deg"] for c in accepted]
+    weights = [_candidate_weight(c) for c in accepted]
+    mean_angle, R = _weighted_axial_mean(angles, weights)
+    sigma         = _weighted_angle_sigma(angles, weights, mean_angle)
+    quality       = R * min(1.0, n_acc / 5.0)
+    valid         = (quality > 0.3) and (n_acc >= min_accepted)
+    return candidates, accepted, AngleEstimate(mean_angle, sigma, quality, valid, "ensemble")
+
+
 # ── ensemble debug plot ────────────────────────────────────────────────────────
 
 def show_ensemble_debug(
@@ -397,159 +431,546 @@ def show_ensemble_debug(
     min_major_length: float = 15.0,
     min_eccentricity: float = 0.85,
 ) -> None:
-    """Six-panel debug: preprocessing stages + ensemble candidate details.
+    """Display ensemble debug output as separate figures:
 
-    Panels:
-    Row 1: stripe+final_overlay | feature_img+overlay | all components (colored by angle)
-    Row 2: accepted candidates with fitted lines | angle histogram | text summary
+    1. Stripe image with final angle overlay
+    2. Feature image with final angle overlay
+    3. All components colored by fitted angle
+    4. Accepted candidates with local fitted lines
+    5. Weighted angle histogram
+    6. Text summary (printed to stdout)
     """
     import matplotlib.pyplot as plt
     import matplotlib.colors as mcolors
     import matplotlib.cm as cm
 
-    # --- recompute to get full debug artifacts ---
+    # --- recompute debug artifacts ---
     candidates, label_img = _extract_candidates(
         feature_img, threshold_pct=threshold_pct, min_pixels=min_pixels)
     accepted = _filter_candidates(
         candidates, min_major_length=min_major_length,
         min_eccentricity=min_eccentricity)
-
     est = measure_ensemble_lines(
         feature_img, threshold_pct=threshold_pct, min_pixels=min_pixels,
         min_major_length=min_major_length, min_eccentricity=min_eccentricity)
 
-    # colormap: angle -90°…90° → color
     angle_cmap = cm.get_cmap("hsv")
     def angle_color(a_deg):
         return angle_cmap((a_deg + 90.0) / 180.0)
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 11))
+    title_suffix = (f"{est.angle_deg:.2f}° ± {est.sigma_deg:.2f}°  "
+                    f"Q={est.quality:.2f}  "
+                    f"{'VALID' if est.valid else 'INVALID'}")
 
-    # ── panel (0,0): stripe with final angle overlay ──
-    _imshow_pct(axes[0, 0], stripe)
+    # ── figure 1: stripe with final angle overlay ──
+    fig, ax = plt.subplots(figsize=(10, 7))
+    _imshow_pct(ax, stripe)
     if est.valid:
-        _draw_line(axes[0, 0], stripe, est.angle_deg, color="lime", lw=2.0)
-    axes[0, 0].set_title(
-        f"Stripe + result  {est.angle_deg:.2f}°\n"
-        f"σ={est.sigma_deg:.2f}°  Q={est.quality:.2f}  "
-        f"{'valid' if est.valid else 'INVALID'}", fontsize=9)
+        _draw_line(ax, stripe, est.angle_deg, color="lime", lw=2.0)
+    ax.set_title(f"Stripe + result  {title_suffix}", fontsize=11)
+    plt.tight_layout()
+    plt.show()
 
-    # ── panel (0,1): feature image with final overlay ──
-    _imshow_pct(axes[0, 1], feature_img, cmap="inferno")
+    # ── figure 2: feature image with final overlay ──
+    fig, ax = plt.subplots(figsize=(10, 7))
+    _imshow_pct(ax, feature_img, cmap="inferno")
     if est.valid:
-        _draw_line(axes[0, 1], feature_img, est.angle_deg, color="lime", lw=1.5)
-    axes[0, 1].set_title("Feature image", fontsize=9)
+        _draw_line(ax, feature_img, est.angle_deg, color="lime", lw=1.5)
+    ax.set_title(f"Feature image  {title_suffix}", fontsize=11)
+    plt.tight_layout()
+    plt.show()
 
-    # ── panel (0,2): all components colored by angle ──
-    # build a pseudo-color image: each component pixel gets its angle as hue
+    # ── figure 3: all components colored by angle ──
     rgb = np.zeros((*feature_img.shape, 3), dtype=np.float32)
     for c in candidates:
         mask = label_img == c["label"]
         col = angle_color(c["angle_deg"])[:3]
         for ch in range(3):
             rgb[:, :, ch][mask] = col[ch]
-    # darken background using feature magnitude
     alpha = (feature_img / (feature_img.max() + 1e-10))[:, :, np.newaxis]
     bg_gray = debug_info["downsampled"]
     bg_norm = (bg_gray / (bg_gray.max() + 1e-10))[:, :, np.newaxis]
-    display = np.where(rgb.sum(axis=2, keepdims=True) > 0, rgb * alpha + bg_norm * (1 - alpha), bg_norm * np.ones(3))
+    display = np.where(
+        rgb.sum(axis=2, keepdims=True) > 0,
+        rgb * alpha + bg_norm * (1 - alpha),
+        bg_norm * np.ones(3))
     display = np.clip(display, 0, 1)
-    axes[0, 2].imshow(display, origin="lower")
-    axes[0, 2].set_title(
-        f"All components ({len(candidates)}) — colored by angle", fontsize=9)
-    axes[0, 2].axis("off")
-    # colorbar for angle
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    ax.imshow(display, origin="lower")
+    ax.set_title(f"All components ({len(candidates)}) — colored by fitted angle", fontsize=11)
+    ax.axis("off")
     sm = cm.ScalarMappable(cmap="hsv", norm=mcolors.Normalize(-90, 90))
     sm.set_array([])
-    plt.colorbar(sm, ax=axes[0, 2], label="angle (°)", fraction=0.046, pad=0.04)
+    plt.colorbar(sm, ax=ax, label="angle (°)", fraction=0.046, pad=0.04)
+    plt.tight_layout()
+    plt.show()
 
-    # ── panel (1,0): accepted candidates with fitted segment lines ──
-    _imshow_pct(axes[1, 0], feature_img, cmap="gray")
+    # ── figure 4: accepted candidates with fitted lines ──
+    fig, ax = plt.subplots(figsize=(10, 7))
+    _imshow_pct(ax, feature_img, cmap="gray")
     rejected_labels = {c["label"] for c in candidates} - {c["label"] for c in accepted}
-    # draw rejected faintly
     for c in candidates:
         if c["label"] in rejected_labels:
             row, col = c["centroid"]
-            axes[1, 0].scatter(col, row, s=4, c="gray", alpha=0.3, linewidths=0)
-    # draw accepted with colored lines
+            ax.scatter(col, row, s=4, c="gray", alpha=0.3, linewidths=0)
     for c in accepted:
         row, col = c["centroid"]
         col_rgb = angle_color(c["angle_deg"])
-        half = c["major_length"] / 2.0
-        _draw_line(axes[1, 0], feature_img, c["angle_deg"],
-                   color=col_rgb, lw=1.5,
-                   cx=col, cy=row, length=half * 2)
-        axes[1, 0].scatter(col, row, s=10, c=[col_rgb], zorder=5, linewidths=0)
+        _draw_line(ax, feature_img, c["angle_deg"],
+                   color=col_rgb, lw=1.5, cx=col, cy=row,
+                   length=c["major_length"])
+        ax.scatter(col, row, s=10, c=[col_rgb], zorder=5, linewidths=0)
     if est.valid:
-        _draw_line(axes[1, 0], feature_img, est.angle_deg,
-                   color="lime", lw=2.5)
-    axes[1, 0].set_title(
-        f"Accepted candidates ({len(accepted)}/{len(candidates)})\n"
-        "— colored lines = local fits, lime = ensemble result", fontsize=9)
+        _draw_line(ax, feature_img, est.angle_deg, color="lime", lw=2.5)
+    ax.set_title(
+        f"Accepted candidates ({len(accepted)}/{len(candidates)})  "
+        f"colored=local fits  lime=ensemble result", fontsize=11)
+    plt.tight_layout()
+    plt.show()
 
-    # ── panel (1,1): weighted angle histogram ──
+    # ── figure 5: weighted angle histogram ──
+    fig, ax = plt.subplots(figsize=(8, 5))
     if accepted:
         a_vals = [c["angle_deg"] for c in accepted]
         w_vals = [_candidate_weight(c) for c in accepted]
         w_norm = np.asarray(w_vals) / (max(w_vals) + 1e-10)
-        colors = [angle_color(a) for a in a_vals]
-        axes[1, 1].barh(
-            range(len(a_vals)), a_vals,
-            left=0,
-            height=0.8,
-            color=colors, alpha=0.85)
-        # replot as horizontal: x=angle, y=rank sorted by angle
-        # actually use a vertical bar chart with angle on x-axis
-        axes[1, 1].cla()
-        order = np.argsort(a_vals)
-        for i, idx in enumerate(order):
-            axes[1, 1].bar(a_vals[idx], w_norm[idx], width=1.5,
-                           color=angle_color(a_vals[idx]), alpha=0.85)
+        for a, w in sorted(zip(a_vals, w_norm)):
+            ax.bar(a, w, width=1.5, color=angle_color(a), alpha=0.85)
         if est.valid:
-            axes[1, 1].axvline(est.angle_deg, color="lime", lw=2.0,
-                               label=f"mean={est.angle_deg:.1f}°")
-            axes[1, 1].legend(fontsize=8)
-        axes[1, 1].set_xlabel("Angle (°)")
-        axes[1, 1].set_ylabel("Normalised weight")
-        axes[1, 1].set_title("Accepted segment angles\n(height ∝ weight)", fontsize=9)
-        axes[1, 1].set_xlim(-95, 95)
+            ax.axvline(est.angle_deg, color="lime", lw=2.0,
+                       label=f"ensemble mean = {est.angle_deg:.1f}°")
+            ax.legend(fontsize=10)
+        ax.set_xlabel("Angle (°)", fontsize=11)
+        ax.set_ylabel("Normalised weight", fontsize=11)
+        ax.set_xlim(-95, 95)
     else:
-        axes[1, 1].text(0.5, 0.5, "No accepted candidates",
-                        ha="center", va="center", transform=axes[1, 1].transAxes)
-        axes[1, 1].set_title("Angle distribution", fontsize=9)
-
-    # ── panel (1,2): text summary ──
-    axes[1, 2].axis("off")
-    summary = (
-        f"Detected components:  {len(candidates)}\n"
-        f"Accepted (filtered):  {len(accepted)}\n"
-        f"\n"
-        f"Filter criteria:\n"
-        f"  min_major_length:   {min_major_length:.0f} px\n"
-        f"  min_eccentricity:   {min_eccentricity:.2f}\n"
-        f"\n"
-        f"Result:\n"
-        f"  angle:    {est.angle_deg:>8.3f} °\n"
-        f"  σ:        {est.sigma_deg:>8.3f} °\n"
-        f"  quality:  {est.quality:>8.3f}  (R·scale)\n"
-        f"  valid:    {'YES' if est.valid else 'NO'}\n"
-    )
-    if accepted:
-        angles_arr = np.array([c["angle_deg"] for c in accepted])
-        summary += (
-            f"\n"
-            f"Ensemble spread:\n"
-            f"  min angle:  {angles_arr.min():.2f}°\n"
-            f"  max angle:  {angles_arr.max():.2f}°\n"
-            f"  raw std:    {angles_arr.std():.2f}°\n"
-        )
-    axes[1, 2].text(0.05, 0.95, summary,
-                    transform=axes[1, 2].transAxes,
-                    fontsize=11, va="top", family="monospace")
-
-    plt.suptitle(
-        f"Ensemble estimator — {est.angle_deg:.2f}° ± {est.sigma_deg:.2f}°   "
-        f"quality={est.quality:.3f}   {'VALID' if est.valid else 'INVALID'}",
-        fontsize=12)
+        ax.text(0.5, 0.5, "No accepted candidates",
+                ha="center", va="center", transform=ax.transAxes, fontsize=12)
+    ax.set_title("Accepted segment angles  (bar height ∝ weight)", fontsize=11)
     plt.tight_layout()
     plt.show()
+
+    # ── output 6: text summary ──
+    angles_arr = np.array([c["angle_deg"] for c in accepted]) if accepted else np.array([])
+    print(
+        f"─── Ensemble estimator ───────────────────────────\n"
+        f"  Detected components : {len(candidates)}\n"
+        f"  Accepted (filtered) : {len(accepted)}\n"
+        f"  Filter criteria     : min_major_length={min_major_length:.0f} px"
+        f",  min_eccentricity={min_eccentricity:.2f}\n"
+        f"\n"
+        f"  angle   : {est.angle_deg:.3f} °\n"
+        f"  σ       : {est.sigma_deg:.3f} °\n"
+        f"  quality : {est.quality:.3f}  (R · scale)\n"
+        f"  valid   : {'YES' if est.valid else 'NO'}\n"
+        + (f"\n"
+           f"  Ensemble spread:\n"
+           f"    min={angles_arr.min():.2f}°  max={angles_arr.max():.2f}°"
+           f"  raw std={angles_arr.std():.2f}°\n"
+           if angles_arr.size else "")
+        + f"──────────────────────────────────────────────────"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Part A — Parameter sweep
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def sweep_ensemble_params(
+    feature_img: np.ndarray,
+    threshold_pcts: Tuple[float, ...] = (70.0, 75.0, 80.0, 85.0, 90.0),
+    min_pixels_vals: Tuple[int, ...] = (20, 40, 60),
+    min_major_lengths: Tuple[float, ...] = (15.0, 25.0, 40.0),
+    min_eccentricities: Tuple[float, ...] = (0.80, 0.85, 0.90, 0.95),
+    min_accepted_for_ranking: int = 3,
+    verbose: bool = True,
+) -> List[Dict[str, Any]]:
+    """Evaluate many ensemble-parameter combinations and rank by a composite score.
+
+    Optimization: candidate extraction (the expensive label+regionprops step)
+    is cached per unique (threshold_pct, min_pixels) pair, so filtering over
+    different length/eccentricity thresholds reuses the same components.
+
+    Ranking score:
+        score = quality × sqrt(n_accepted) / (sigma_deg + 0.5)
+    Rewards: high quality, enough accepted candidates, low sigma.
+    Invalid results and those with < min_accepted_for_ranking get score = 0.
+
+    Returns a list of dicts sorted best-first.  Each dict contains:
+      threshold_pct, min_pixels, min_major_length, min_eccentricity,
+      angle_deg, sigma_deg, quality, valid,
+      n_detected, n_accepted, acceptance_frac, raw_std_deg, rank_score.
+    """
+    import itertools
+
+    combos = list(itertools.product(
+        threshold_pcts, min_pixels_vals, min_major_lengths, min_eccentricities))
+    if verbose:
+        print(f"Sweeping {len(combos)} combinations "
+              f"({len(threshold_pcts)}×{len(min_pixels_vals)}×"
+              f"{len(min_major_lengths)}×{len(min_eccentricities)})…")
+
+    # Cache extraction results for each (threshold_pct, min_pixels) pair
+    cache: Dict[Tuple, List[Dict]] = {}
+    for thresh, mpix in itertools.product(threshold_pcts, min_pixels_vals):
+        key = (thresh, mpix)
+        if key not in cache:
+            cands, _ = _extract_candidates(
+                feature_img, threshold_pct=thresh, min_pixels=mpix)
+            cache[key] = cands
+
+    rows = []
+    for thresh, mpix, mlen, mecc in combos:
+        all_c    = cache[(thresh, mpix)]
+        accepted = _filter_candidates(all_c, min_major_length=mlen,
+                                      min_eccentricity=mecc)
+        n_det = len(all_c)
+        n_acc = len(accepted)
+
+        # ensemble angle from accepted candidates
+        if n_acc >= 2:
+            angles  = [c["angle_deg"] for c in accepted]
+            weights = [_candidate_weight(c) for c in accepted]
+            mean_angle, R = _weighted_axial_mean(angles, weights)
+            sigma         = _weighted_angle_sigma(angles, weights, mean_angle)
+            quality       = R * min(1.0, n_acc / 5.0)
+            valid         = (quality > 0.3)
+            raw_std       = float(np.std(angles))
+        else:
+            mean_angle = 0.0
+            sigma      = 180.0
+            quality    = 0.0
+            valid      = False
+            raw_std    = float("nan")
+
+        acc_frac   = n_acc / n_det if n_det > 0 else 0.0
+        rank_score = (
+            quality * (n_acc ** 0.5) / (sigma + 0.5)
+            if valid and n_acc >= min_accepted_for_ranking else 0.0
+        )
+
+        rows.append({
+            "threshold_pct":    thresh,
+            "min_pixels":       mpix,
+            "min_major_length": mlen,
+            "min_eccentricity": mecc,
+            "angle_deg":        mean_angle,
+            "sigma_deg":        sigma,
+            "quality":          quality,
+            "valid":            valid,
+            "n_detected":       n_det,
+            "n_accepted":       n_acc,
+            "acceptance_frac":  acc_frac,
+            "raw_std_deg":      raw_std,
+            "rank_score":       rank_score,
+        })
+
+    rows.sort(key=lambda r: r["rank_score"], reverse=True)
+
+    if verbose:
+        n_valid = sum(r["valid"] for r in rows)
+        print(f"Done.  {n_valid}/{len(rows)} valid.  "
+              f"Best score: {rows[0]['rank_score']:.3f}  "
+              f"→ angle={rows[0]['angle_deg']:.2f}°  σ={rows[0]['sigma_deg']:.2f}°")
+
+    return rows
+
+
+def print_sweep_results(results: List[Dict[str, Any]], top_n: int = 20) -> None:
+    """Pretty-print the top_n rows from sweep_ensemble_params."""
+    hdr = (f"{'#':>3}  {'thr':>4}  {'mpx':>3}  {'mlen':>4}  {'mecc':>4}  "
+           f"{'angle':>7}  {'sigma':>6}  {'qual':>5}  {'V':>1}  "
+           f"{'nacc':>4}  {'ndet':>4}  {'acc%':>4}  {'score':>7}")
+    print(hdr)
+    print("─" * len(hdr))
+    for i, r in enumerate(results[:top_n]):
+        print(
+            f"{i+1:>3}  {r['threshold_pct']:>4.0f}  {r['min_pixels']:>3}  "
+            f"{r['min_major_length']:>4.0f}  {r['min_eccentricity']:>4.2f}  "
+            f"{r['angle_deg']:>7.2f}  {r['sigma_deg']:>6.3f}  "
+            f"{r['quality']:>5.3f}  {'Y' if r['valid'] else 'n':>1}  "
+            f"{r['n_accepted']:>4}  {r['n_detected']:>4}  "
+            f"{r['acceptance_frac']*100:>4.1f}  {r['rank_score']:>7.3f}"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Part B — Field angle variation analysis
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def analyze_field_angle_variation(
+    feature_img: np.ndarray,
+    threshold_pct: float = 75.0,
+    min_pixels: int = 30,
+    min_major_length: float = 15.0,
+    min_eccentricity: float = 0.85,
+) -> Tuple[List[Dict[str, Any]], AngleEstimate]:
+    """Return a per-candidate table annotated with spatial position and residuals.
+
+    Centroids are in feature_img pixel coords (col=x increases right,
+    row=y with origin='lower' so row 0 is display-bottom).
+    Normalized coords scale to [-1, 1] over the smaller half-dimension.
+
+    Each row in the returned list contains:
+      cx_px, cy_px          : centroid in feature_img array pixels
+      cx_norm, cy_norm       : normalized position (0 = centre, ±1 = roi edge)
+      radius_norm            : radial distance from image centre
+      azimuth_deg            : azimuthal angle around field centre (E-of-N)
+      angle_deg              : locally fitted line angle
+      residual_deg           : angle − global ensemble mean (wrapped to (−90°, 90°])
+      major_length           : major axis length (px)
+      eccentricity
+      mean_brightness
+      weight                 : _candidate_weight value
+    """
+    all_c, accepted, est = _run_ensemble(
+        feature_img, threshold_pct=threshold_pct, min_pixels=min_pixels,
+        min_major_length=min_major_length, min_eccentricity=min_eccentricity)
+
+    if not accepted:
+        return [], est
+
+    H, W = feature_img.shape
+    cy_img, cx_img = H / 2.0, W / 2.0
+    r_scale = min(cy_img, cx_img)
+
+    # global mean: use ensemble result if valid, else unweighted mean
+    global_angle = (est.angle_deg if est.valid
+                    else float(np.mean([c["angle_deg"] for c in accepted])))
+
+    rows = []
+    for c in accepted:
+        row_arr, col_arr = c["centroid"]   # array (row, col); row 0 = top of array
+
+        # In display with origin='lower', row 0 is bottom: cy_px = row_arr directly
+        cx_px = float(col_arr)
+        cy_px = float(row_arr)
+
+        x_norm = (cx_px - cx_img) / r_scale
+        # y_norm: positive = upward in display = smaller row index in array → negate
+        y_norm = -(cy_px - cy_img) / r_scale
+        radius_norm  = float(np.sqrt(x_norm**2 + y_norm**2))
+        azimuth_deg  = float(np.degrees(np.arctan2(y_norm, x_norm)))
+
+        raw_residual = c["angle_deg"] - global_angle
+        residual_deg = float((raw_residual + 90.0) % 180.0 - 90.0)
+
+        rows.append({
+            "cx_px":          cx_px,
+            "cy_px":          cy_px,
+            "cx_norm":        float(x_norm),
+            "cy_norm":        float(y_norm),
+            "radius_norm":    radius_norm,
+            "azimuth_deg":    azimuth_deg,
+            "angle_deg":      c["angle_deg"],
+            "residual_deg":   residual_deg,
+            "major_length":   c["major_length"],
+            "eccentricity":   c["eccentricity"],
+            "mean_brightness":c["mean_brightness"],
+            "weight":         _candidate_weight(c),
+        })
+
+    return rows, est
+
+
+def show_field_angle_overlay(
+    feature_img: np.ndarray,
+    field_data: List[Dict[str, Any]],
+    est: Optional[AngleEstimate] = None,
+    background: Optional[np.ndarray] = None,
+    residual_vmax: float = 5.0,
+) -> None:
+    """Overlay fitted segment lines on the image, coloured by residual angle.
+
+    Each accepted segment is drawn at its centroid with length = major_length.
+    Colour = residual angle on a RdBu_r diverging scale (blue=negative,
+    white=0, red=positive).  Line width scales with normalised weight so
+    stronger candidates are more prominent.
+
+    Parameters
+    ----------
+    feature_img    : image that defines the coordinate frame (for centroid coords)
+    field_data     : output of analyze_field_angle_variation()
+    est            : AngleEstimate for the global mean line overlay (optional)
+    background     : image to show as grayscale background; defaults to feature_img.
+                     Pass dbg["downsampled"] for a more natural astronomical look.
+    residual_vmax  : colour scale ±limit in degrees
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
+    import matplotlib.colors as mcolors
+
+    if not field_data:
+        print("No field data to display.")
+        return
+
+    bg = background if background is not None else feature_img
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    finite = bg[np.isfinite(bg)]
+    vmin, vmax = np.percentile(finite, [1.0, 99.5]) if finite.size else (0.0, 1.0)
+    ax.imshow(bg, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
+
+    cmap_res = cm.get_cmap("RdBu_r")
+    norm_res = mcolors.Normalize(vmin=-residual_vmax, vmax=residual_vmax)
+
+    weights = np.array([d["weight"] for d in field_data])
+    w_max   = weights.max() + 1e-10
+
+    for d in field_data:
+        color = cmap_res(norm_res(d["residual_deg"]))
+        lw    = 0.8 + 2.5 * (d["weight"] / w_max)
+        _draw_line(ax, feature_img, d["angle_deg"],
+                   color=color, lw=lw,
+                   cx=d["cx_px"], cy=d["cy_px"],
+                   length=d["major_length"])
+
+    if est is not None and est.valid:
+        _draw_line(ax, feature_img, est.angle_deg, color="lime", lw=2.5)
+        ax.set_title(
+            f"Local fits coloured by residual  "
+            f"(lime = global mean {est.angle_deg:.2f}°)\n"
+            f"RdBu_r: blue = −{residual_vmax}°  white = 0°  red = +{residual_vmax}°",
+            fontsize=11)
+    else:
+        ax.set_title("Local fits coloured by residual angle", fontsize=11)
+
+    sm = cm.ScalarMappable(cmap="RdBu_r", norm=norm_res)
+    sm.set_array([])
+    plt.colorbar(sm, ax=ax, label="Residual angle (°)", fraction=0.03, pad=0.02)
+    plt.tight_layout()
+    plt.show()
+
+
+def show_field_angle_trends(
+    field_data: List[Dict[str, Any]],
+    feature_img_shape: Tuple[int, int],
+) -> None:
+    """Spatial trend plots for local angle residuals.
+
+    Shows four separate figures:
+      1. Residual vs X (column position) with weighted linear fit
+      2. Residual vs Y (row position, display-up) with weighted linear fit
+      3. Residual vs radius from centre with binned trend + fit
+      4. 2D spatial scatter: each candidate dot at (cx_px, cy_px) coloured by residual
+
+    Prints Pearson r and weighted linear slope for each 1D trend.
+    These let you judge whether residuals are random scatter or a coherent
+    spatial pattern (e.g. from lens distortion).
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
+    import matplotlib.colors as mcolors
+
+    if not field_data:
+        print("No field data.")
+        return
+
+    cx   = np.array([d["cx_norm"]    for d in field_data])
+    cy   = np.array([d["cy_norm"]    for d in field_data])
+    rad  = np.array([d["radius_norm"]for d in field_data])
+    res  = np.array([d["residual_deg"]for d in field_data])
+    wts  = np.array([d["weight"]     for d in field_data])
+    wts_norm = wts / (wts.sum() + 1e-10)
+
+    def _wlinfit(x, y, w):
+        """Weighted linear fit y = m*x + b. Returns (m, b, r_pearson)."""
+        sw   = np.sqrt(w / (w.sum() + 1e-10))
+        coef = np.polyfit(x, y, 1, w=sw)
+        # weighted Pearson r
+        xm = np.dot(w, x) / w.sum()
+        ym = np.dot(w, y) / w.sum()
+        cov = np.dot(w, (x - xm) * (y - ym))
+        sx  = np.sqrt(np.dot(w, (x - xm)**2))
+        sy  = np.sqrt(np.dot(w, (y - ym)**2))
+        r   = float(cov / (sx * sy + 1e-10))
+        return float(coef[0]), float(coef[1]), r
+
+    cmap_res = cm.get_cmap("RdBu_r")
+    res_vmax = max(abs(res).max(), 1.0)
+    norm_res = mcolors.Normalize(vmin=-res_vmax, vmax=res_vmax)
+    colors   = [cmap_res(norm_res(r)) for r in res]
+    sizes    = 20 + 80 * (wts / (wts.max() + 1e-10))
+
+    x_fit = np.linspace(-1.1, 1.1, 200)
+
+    # ── figure 1: residual vs X ──
+    m, b, r = _wlinfit(cx, res, wts)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(cx, res, c=colors, s=sizes, alpha=0.85, edgecolors="none")
+    ax.plot(x_fit, m * x_fit + b, "k--", lw=1.5,
+            label=f"fit: {m:+.3f}·x + {b:+.3f}°  (r={r:+.3f})")
+    ax.axhline(0, color="gray", lw=0.8, linestyle=":")
+    ax.set_xlabel("X position (normalised, 0=centre)", fontsize=11)
+    ax.set_ylabel("Residual angle (°)", fontsize=11)
+    ax.set_title("Residual angle vs X", fontsize=12)
+    ax.legend(fontsize=10)
+    print(f"Residual vs X :  slope={m:+.4f} °/unit   r={r:+.4f}")
+    plt.tight_layout(); plt.show()
+
+    # ── figure 2: residual vs Y ──
+    m, b, r = _wlinfit(cy, res, wts)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(cy, res, c=colors, s=sizes, alpha=0.85, edgecolors="none")
+    ax.plot(x_fit, m * x_fit + b, "k--", lw=1.5,
+            label=f"fit: {m:+.3f}·y + {b:+.3f}°  (r={r:+.3f})")
+    ax.axhline(0, color="gray", lw=0.8, linestyle=":")
+    ax.set_xlabel("Y position (normalised, 0=centre, +up)", fontsize=11)
+    ax.set_ylabel("Residual angle (°)", fontsize=11)
+    ax.set_title("Residual angle vs Y", fontsize=12)
+    ax.legend(fontsize=10)
+    print(f"Residual vs Y :  slope={m:+.4f} °/unit   r={r:+.4f}")
+    plt.tight_layout(); plt.show()
+
+    # ── figure 3: residual vs radius ──
+    m, b, r = _wlinfit(rad, res, wts)
+    # binned radial trend
+    n_bins  = min(8, max(3, len(field_data) // 5))
+    bin_edges = np.linspace(rad.min(), rad.max(), n_bins + 1)
+    bin_means, bin_centers = [], []
+    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+        mask = (rad >= lo) & (rad < hi)
+        if mask.sum() >= 2:
+            w_bin = wts[mask]
+            bin_means.append(np.dot(w_bin, res[mask]) / w_bin.sum())
+            bin_centers.append((lo + hi) / 2)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(rad, res, c=colors, s=sizes, alpha=0.85, edgecolors="none")
+    r_fit = np.linspace(0, rad.max() * 1.05, 200)
+    ax.plot(r_fit, m * r_fit + b, "k--", lw=1.5,
+            label=f"fit: {m:+.3f}·r + {b:+.3f}°  (r={r:+.3f})")
+    if bin_centers:
+        ax.plot(bin_centers, bin_means, "s-", color="orange",
+                ms=7, lw=1.5, label="binned mean")
+    ax.axhline(0, color="gray", lw=0.8, linestyle=":")
+    ax.set_xlabel("Radius from centre (normalised)", fontsize=11)
+    ax.set_ylabel("Residual angle (°)", fontsize=11)
+    ax.set_title("Residual angle vs Radius", fontsize=12)
+    ax.legend(fontsize=10)
+    print(f"Residual vs R :  slope={m:+.4f} °/unit   r={r:+.4f}")
+    plt.tight_layout(); plt.show()
+
+    # ── figure 4: 2D spatial scatter coloured by residual ──
+    H, W = feature_img_shape
+    cx_px = np.array([d["cx_px"] for d in field_data])
+    cy_px = np.array([d["cy_px"] for d in field_data])
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    sc = ax.scatter(cx_px, cy_px, c=res, s=sizes, cmap="RdBu_r",
+                    vmin=-res_vmax, vmax=res_vmax,
+                    alpha=0.9, edgecolors="gray", linewidths=0.3)
+    ax.set_xlim(0, W); ax.set_ylim(0, H)
+    ax.set_xlabel("Column (px)", fontsize=11)
+    ax.set_ylabel("Row (px, 0=top of array)", fontsize=11)
+    ax.set_title("2D spatial distribution of angle residuals\n"
+                 "(dot size ∝ weight,  colour = residual °)", fontsize=11)
+    ax.invert_yaxis()   # match array convention: row 0 at top
+    plt.colorbar(sc, ax=ax, label="Residual angle (°)", fraction=0.03, pad=0.02)
+    plt.tight_layout(); plt.show()
+
+    # ── summary ──
+    print(f"\nField variation summary ({len(field_data)} accepted candidates):")
+    print(f"  residual range:  [{res.min():.2f}°, {res.max():.2f}°]")
+    print(f"  weighted rms:    {np.sqrt(np.dot(wts_norm, res**2)):.3f}°")
