@@ -17,6 +17,7 @@ Thumbs.db
 
 data/
 out/
+astrometry_api.txt
 sim/physics/starfields/field3.csv
 CLAUDE.md
 .claude/
