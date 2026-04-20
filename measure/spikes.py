@@ -286,9 +286,10 @@ def _save_angle_plot(
     vmin, vmax = (np.percentile(finite, [0.5, 99.5]) if finite.size else (0, 1))
     ax.imshow(image, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
 
+    h, w = image.shape[:2]
     if angle_deg is not None:
-        cy, cx = image.shape[0] / 2.0, image.shape[1] / 2.0
-        L = float(max(image.shape))
+        cy, cx = h / 2.0, w / 2.0
+        L = float(max(h, w))
         tr = np.radians(angle_deg)
         ax.plot(
             [cx - np.cos(tr) * L, cx + np.cos(tr) * L],
@@ -300,6 +301,9 @@ def _save_angle_plot(
     else:
         label = f"No valid solution  (Q={quality:.3f})"
         color = "red"
+
+    ax.set_xlim(-0.5, w - 0.5)
+    ax.set_ylim(-0.5, h - 0.5)
 
     ax.text(0.02, 0.97, label, transform=ax.transAxes, color=color, fontsize=12,
             fontweight="bold", va="top",

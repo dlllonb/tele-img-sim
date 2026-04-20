@@ -264,10 +264,11 @@ def _show_stripe_angle(
     vmin, vmax = (np.percentile(finite, [0.5, 99.5]) if finite.size else (0, 1))
     ax.imshow(stripe_image, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
 
+    h, w = stripe_image.shape[:2]
     angle = spike_res.image_angle_deg
     if angle is not None:
-        cy, cx = stripe_image.shape[0] / 2.0, stripe_image.shape[1] / 2.0
-        L = float(max(stripe_image.shape))
+        cy, cx = h / 2.0, w / 2.0
+        L = float(max(h, w))
         tr = np.radians(angle)
         ax.plot(
             [cx - np.cos(tr) * L, cx + np.cos(tr) * L],
@@ -281,6 +282,10 @@ def _show_stripe_angle(
     else:
         label = "No valid angle solution"
         color = "red"
+
+    # Restore image extents so the line is clipped at the image edge
+    ax.set_xlim(-0.5, w - 0.5)
+    ax.set_ylim(-0.5, h - 0.5)
 
     ax.text(0.02, 0.97, label, transform=ax.transAxes, color=color, fontsize=12,
             fontweight="bold", va="top",
