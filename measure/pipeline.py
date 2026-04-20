@@ -146,6 +146,10 @@ def run_measurement_pipeline(
             masked_star_branch.image, plate_res,
             save_path=runpath / "platesolve.png" if runpath else None,
         )
+        _show_final_result(
+            masked_star_branch.image, plate_res, spike_res, metrics,
+            save_path=runpath / "final_result.png" if runpath else None,
+        )
 
     # determine overall success
     success = bool(metrics.sky_angle_deg is not None)
@@ -292,6 +296,141 @@ def _show_stripe_angle(
             bbox=dict(facecolor="black", alpha=0.5, pad=3))
     ax.set_title("Stripe branch — ensemble angle")
     ax.axis("off")
+    plt.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+def _show_final_result(
+    star_image: np.ndarray,
+    plate_res,
+    spike_res,
+    metrics,
+    save_path: Optional[Path] = None,
+) -> None:
+    """Combined summary: WCS grid, source circles, north arrow, spectra orientation."""
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
+        import warnings
+        from matplotlib.patches import FancyArrowPatch, Circle
+        from astropy.wcs import WCS
+        from astropy.io import fits as _fits
+    except ImportError:
+        return
+
+    wcs = None
+    if plate_res.success and plate_res.wcs_info is not None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            wcs = WCS(plate_res.wcs_info) if isinstance(plate_res.wcs_info, _fits.Header) else plate_res.wcs_info
+
+    subplot_kw = {"projection": wcs} if wcs is not None else {}
+    fig, ax = plt.subplots(figsize=(11, 9), subplot_kw=subplot_kw)
+
+    finite = star_image[np.isfinite(star_image)]
+    vmin, vmax = (np.percentile(finite, [0.5, 99.5]) if finite.size else (0, 1))
+    disp = np.arcsinh(np.clip(star_image, vmin, vmax))
+    ax.imshow(disp, origin="lower", cmap="gray",
+              vmin=np.arcsinh(vmin), vmax=np.arcsinh(vmax))
+
+    h, w = star_image.shape[:2]
+
+    # WCS grid
+    if wcs is not None:
+        ax.coords.grid(True, color="cyan", alpha=0.35, linestyle="--", linewidth=0.7)
+        ax.coords["ra"].set_axislabel("RA")
+        ax.coords["dec"].set_axislabel("Dec")
+
+    # Source circles
+    sources = plate_res.debug.get("sources", {})
+    xs, ys = sources.get("x", np.array([])), sources.get("y", np.array([]))
+    for x, y in zip(xs, ys):
+        ax.add_patch(Circle((x, y), radius=12,
+                             edgecolor="lime", facecolor="none",
+                             linewidth=0.8, alpha=0.75))
+
+    cx, cy = w / 2.0, h / 2.0
+    arrow_len = min(h, w) * 0.12
+
+    # North arrow — direction of +Y sky axis in pixel frame
+    # rot_deg is PA of detector +Y East of North, so North is in the +Y direction when rot=0.
+    # In general, the pixel direction toward North makes angle rot_deg with image +Y axis (CCW).
+    if plate_res.success and plate_res.rot_deg is not None:
+        rot_rad = np.radians(plate_res.rot_deg)
+        # pixel vector pointing toward North: rotate +Y by -rot_deg
+        ndx = -np.sin(rot_rad)
+        ndy = np.cos(rot_rad)
+        ax.annotate(
+            "", xy=(cx + ndx * arrow_len, cy + ndy * arrow_len),
+            xytext=(cx, cy),
+            arrowprops=dict(arrowstyle="-|>", color="yellow", lw=2.0),
+        )
+        ax.text(cx + ndx * (arrow_len + 8), cy + ndy * (arrow_len + 8),
+                "N", color="yellow", fontsize=11, fontweight="bold",
+                ha="center", va="center")
+
+    # Spectra orientation line — sky_angle_deg East of North
+    if metrics.sky_angle_deg is not None and plate_res.rot_deg is not None:
+        sky_rad = np.radians(metrics.sky_angle_deg)
+        # Convert sky-frame East-of-North to pixel direction.
+        # North pixel direction: angle rot_deg from image +Y.
+        # East is 90° CCW from North on sky, but in standard image coords (origin=lower)
+        # East is toward decreasing RA, which is +X for typical WCS.
+        # The pixel angle for sky PA θ: pixel_angle_from_+X = (90 - rot_deg - θ) ... easier via:
+        # sky PA θ EoN: pixel vector = R(-rot_deg) applied to [sin(θ), cos(θ)] in sky (N=+Y, E=+X image)
+        rot_rad = np.radians(plate_res.rot_deg)
+        sn, cs = np.sin(sky_rad), np.cos(sky_rad)  # East, North components in sky frame
+        # pixel +Y is North rotated by rot_deg; pixel +X is East (approx, ignoring RA cos factor)
+        # pixel_x = cos(rot_deg)*sn + sin(rot_deg)*cs ... full rotation:
+        pdx = np.cos(rot_rad) * sn - np.sin(rot_rad) * cs
+        pdy = np.sin(rot_rad) * sn + np.cos(rot_rad) * cs
+        # Normalise
+        norm = np.hypot(pdx, pdy) + 1e-10
+        pdx, pdy = pdx / norm, pdy / norm
+
+        L = min(h, w) * 0.38
+        sigma = spike_res.sigma_angle_deg or 0.0
+        label_str = (
+            f"Spectra: {metrics.sky_angle_deg:.1f}° ± {sigma:.1f}° EoN"
+            if spike_res.success else "Spectra: no valid solution"
+        )
+        ax.plot(
+            [cx - pdx * L, cx + pdx * L],
+            [cy - pdy * L, cy + pdy * L],
+            color="orange", linewidth=2.0, alpha=0.9, label=label_str,
+        )
+
+    ax.set_xlim(-0.5, w - 0.5)
+    ax.set_ylim(-0.5, h - 0.5)
+
+    # Annotation text
+    lines = []
+    if plate_res.success:
+        lines.append(f"RA={plate_res.ra_deg:.4f}°  Dec={plate_res.dec_deg:.4f}°  rot={plate_res.rot_deg:.2f}°")
+    else:
+        lines.append("Platesolve: FAILED")
+    if metrics.sky_angle_deg is not None:
+        sigma = spike_res.sigma_angle_deg or 0.0
+        lines.append(f"Spectra orientation: {metrics.sky_angle_deg:.2f}° ± {sigma:.2f}° East of North")
+    else:
+        lines.append("Spectra orientation: unavailable")
+    ax.text(0.02, 0.97, "\n".join(lines), transform=ax.transAxes,
+            color="white", fontsize=10, fontweight="bold", va="top",
+            bbox=dict(facecolor="black", alpha=0.55, pad=4))
+
+    # Legend patches
+    handles = [
+        mpatches.Patch(color="lime", label=f"Sources ({len(xs)})"),
+        mpatches.Patch(color="yellow", label="North"),
+        mpatches.Patch(color="orange", label="Spectra orientation"),
+    ]
+    ax.legend(handles=handles, loc="lower right", fontsize=9,
+              facecolor="black", labelcolor="white", framealpha=0.6)
+
+    ax.set_title("Final measurement result", fontsize=11)
     plt.tight_layout()
     if save_path is not None:
         fig.savefig(save_path, dpi=150, bbox_inches="tight")

@@ -47,13 +47,15 @@ def run_platesolve(
         res.messages.append("no sources detected in star branch image")
         return res
 
-    # Top N by flux
+    # Top N by flux, then deduplicate overlapping detections
     fluxes = sources["flux"]
     if len(fluxes) > _MAX_SOURCES:
         top = np.argsort(fluxes)[::-1][:_MAX_SOURCES]
-        xs, ys = sources["x"][top], sources["y"][top]
+        xs, ys, fs = sources["x"][top], sources["y"][top], fluxes[top]
     else:
-        xs, ys = sources["x"], sources["y"]
+        xs, ys, fs = sources["x"], sources["y"], fluxes
+
+    xs, ys = _deduplicate_sources(xs, ys, fs)
 
     res.debug["sources"] = {"x": xs, "y": ys}
     res.messages.append(f"submitting {len(xs)} sources to nova.astrometry.net")
@@ -147,6 +149,37 @@ def _detect_sources(image: np.ndarray) -> Optional[dict]:
         "y":    table["ycentroid"].data.astype(float),
         "flux": table["flux"].data.astype(float),
     }
+
+
+def _deduplicate_sources(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    fluxes: np.ndarray,
+    min_separation: float = 24.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Greedy NMS: keep only one source per cluster of overlapping detections.
+
+    Iterates brightest-first (fluxes assumed pre-sorted descending).  A
+    candidate is accepted only if no already-accepted source is within
+    ``min_separation`` pixels.  Default 24 px = 2 × the 12 px display-circle
+    radius, i.e. circles that touch or overlap are collapsed to the brighter one.
+    """
+    if len(xs) == 0:
+        return xs, ys
+
+    kept_x: list[float] = []
+    kept_y: list[float] = []
+
+    for x, y in zip(xs, ys):
+        if kept_x:
+            dx = np.asarray(kept_x) - x
+            dy = np.asarray(kept_y) - y
+            if np.min(dx * dx + dy * dy) < min_separation ** 2:
+                continue
+        kept_x.append(float(x))
+        kept_y.append(float(y))
+
+    return np.asarray(kept_x), np.asarray(kept_y)
 
 
 def _extract_rot(wcs: WCS) -> float:
