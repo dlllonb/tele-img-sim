@@ -94,29 +94,19 @@ def write_summary(result: "MeasurementResult", runpath: Path) -> Path:
     # stripe measurement results
     sr = result.spike_result
     summary["stripe"] = {
-        "success": sr.success,
-        "consensus_angle_deg": sr.image_angle_deg,
-        "consensus_sigma_deg": sr.sigma_angle_deg,
-        "radon_angle_deg": sr.radon_angle_deg,
-        "radon_sigma_deg": sr.radon_sigma_deg,
-        "hough_angle_deg": sr.hough_angle_deg,
-        "hough_sigma_deg": sr.hough_sigma_deg,
-        "fourier_angle_deg": sr.fourier_angle_deg,
-        "fourier_sigma_deg": sr.fourier_sigma_deg,
+        "success":    sr.success,
+        "angle_deg":  sr.image_angle_deg,
+        "sigma_deg":  sr.sigma_angle_deg,
+        "quality":    sr.quality,
+        "n_accepted": sr.n_accepted,
+        "n_detected": sr.n_detected,
     }
 
     # derived metrics
     summary["metrics"] = {
-        "sky_angle_deg": result.metrics.sky_angle_deg,
+        "sky_angle_deg":   result.metrics.sky_angle_deg,
         "final_sigma_deg": result.metrics.final_sigma_deg,
-        "quality_flags": result.metrics.quality_flags,
-    }
-
-    # diagnostics placeholders
-    summary["diagnostics"] = {
-        "n_detected_stars": None,
-        "n_used_for_solve": None,
-        "n_stripe_features": None,
+        "quality_flags":   result.metrics.quality_flags,
     }
 
     # messages/log

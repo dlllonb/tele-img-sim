@@ -165,17 +165,11 @@ class PlateSolveResult:
 @dataclass
 class SpikeMeasurementResult:
     success: bool = False
-    image_angle_deg: Optional[float] = None   # consensus (median of methods)
-    sigma_angle_deg: Optional[float] = None   # combined uncertainty
-    feature_type: Optional[str] = None
-
-    # per-method results
-    radon_angle_deg: Optional[float] = None
-    radon_sigma_deg: Optional[float] = None
-    hough_angle_deg: Optional[float] = None
-    hough_sigma_deg: Optional[float] = None
-    fourier_angle_deg: Optional[float] = None
-    fourier_sigma_deg: Optional[float] = None
+    image_angle_deg: Optional[float] = None
+    sigma_angle_deg: Optional[float] = None
+    quality: Optional[float] = None       # ensemble resultant length R ∈ [0, 1]
+    n_accepted: int = 0                   # segments passing all filters
+    n_detected: int = 0                   # total connected components found
 
     messages: List[str] = field(default_factory=list)
     debug: Dict[str, Any] = field(default_factory=dict)

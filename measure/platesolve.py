@@ -55,6 +55,7 @@ def run_platesolve(
     else:
         xs, ys = sources["x"], sources["y"]
 
+    res.debug["sources"] = {"x": xs, "y": ys}
     res.messages.append(f"submitting {len(xs)} sources to nova.astrometry.net")
 
     try:

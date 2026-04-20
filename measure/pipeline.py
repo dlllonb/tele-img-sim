@@ -9,6 +9,7 @@ import numpy as np
 from astropy.io import fits
 
 from .types import (
+    BranchImageResult,
     MeasurementInput,
     MeasurementMetadata,
     MeasurementResult,
@@ -101,6 +102,7 @@ def run_measurement_pipeline(
     stripe_branch = prepare_stripe_branch_input(image, meta)
     messages.extend(star_branch.messages)
     messages.extend(stripe_branch.messages)
+    # spike and plate messages are appended after those stages run
     if keep_intermediates:
         intermediates["star_branch_image"] = star_branch.image
         intermediates["stripe_branch_image"] = stripe_branch.image
@@ -113,43 +115,37 @@ def run_measurement_pipeline(
         output_paths["stripe_branch_fits"] = str(p2)
         messages.append(f"wrote branch FITS files")
 
-    # optional display
-    if show:
-        try:
-            import matplotlib.pyplot as plt
-
-            def _display_with_percentile(ax, img, title, qlo=0.5, qhi=99.5):
-                # compute robust limits
-                finite = img[np.isfinite(img)]
-                if finite.size > 0:
-                    vmin = float(np.percentile(finite, qlo))
-                    vmax = float(np.percentile(finite, qhi))
-                else:
-                    vmin, vmax = 0.0, 1.0
-                if verbose:
-                    messages.append(f"{title} display vmin={vmin:.3g} vmax={vmax:.3g}")
-                ax.imshow(img, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
-                ax.set_title(title)
-
-            fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-            _display_with_percentile(ax[0], star_branch.image, "star branch")
-            _display_with_percentile(ax[1], stripe_branch.image, "stripe branch")
-            plt.show()
-        except ImportError:
-            messages.append("matplotlib not available; cannot show images")
-
-    # 3. platesolve
-    plate_res = run_platesolve(star_branch, meta)
-    messages.append("platesolve stage completed")
-
-    # 4. stripe measurement
-    spike_res = measure_diffraction_angle(stripe_branch, meta,
-                                          save_dir=runpath, show=show)
+    # 3. stripe measurement (first — so we can mask stripes before platesolving)
+    spike_res = measure_diffraction_angle(stripe_branch, meta, save_dir=runpath)
     messages.append("diffraction angle stage completed")
+    messages.extend(spike_res.messages)
+
+    # 4. build stripe-masked star image and platesolve
+    stripe_mask = spike_res.debug.get("stripe_mask")
+    masked_star_branch = _apply_stripe_mask(star_branch, stripe_mask)
+    messages.append(
+        f"stripe mask applied: "
+        f"{int(stripe_mask.sum()) if stripe_mask is not None else 0} px blanked"
+    )
+
+    plate_res = run_platesolve(masked_star_branch, meta)
+    messages.append("platesolve stage completed")
+    messages.extend(plate_res.messages)
 
     # 5. metrics
     metrics = compute_metrics(plate_res, spike_res, meta)
     messages.append("metrics computed")
+
+    # 6. display — each result shown exactly once
+    if show:
+        _show_stripe_angle(
+            stripe_branch.image, spike_res,
+            save_path=runpath / "stripe_angle.png" if runpath else None,
+        )
+        _show_platesolve(
+            masked_star_branch.image, plate_res,
+            save_path=runpath / "platesolve.png" if runpath else None,
+        )
 
     # determine overall success
     success = bool(metrics.sky_angle_deg is not None)
@@ -176,3 +172,123 @@ def run_measurement_pipeline(
             print(m)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Display helpers
+# ---------------------------------------------------------------------------
+
+def _apply_stripe_mask(
+    star_branch: BranchImageResult,
+    stripe_mask: Optional[np.ndarray],
+) -> BranchImageResult:
+    """Return a copy of star_branch with accepted stripe pixels zeroed out."""
+    import copy
+    masked = copy.copy(star_branch)
+    if stripe_mask is not None and stripe_mask.any():
+        img = star_branch.image.copy()
+        img[stripe_mask] = 0.0
+        masked.image = img
+        masked.messages = list(star_branch.messages) + ["stripe pixels masked before platesolve"]
+    return masked
+
+
+def _show_platesolve(
+    star_image: np.ndarray,
+    plate_res,
+    save_path: Optional[Path] = None,
+) -> None:
+    """Star branch image with WCS sky-grid overlay and detected sources circled."""
+    try:
+        import matplotlib.pyplot as plt
+        import warnings
+        from matplotlib.patches import Circle
+        from astropy.wcs import WCS
+        from astropy.io import fits as _fits
+    except ImportError:
+        return
+
+    wcs = None
+    if plate_res.success and plate_res.wcs_info is not None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            wcs = WCS(plate_res.wcs_info) if isinstance(plate_res.wcs_info, _fits.Header) else plate_res.wcs_info
+
+    subplot_kw = {"projection": wcs} if wcs is not None else {}
+    fig, ax = plt.subplots(figsize=(10, 8), subplot_kw=subplot_kw)
+
+    finite = star_image[np.isfinite(star_image)]
+    vmin, vmax = (np.percentile(finite, [0.5, 99.5]) if finite.size else (0, 1))
+    disp = np.arcsinh(np.clip(star_image, vmin, vmax))
+    ax.imshow(disp, origin="lower", cmap="gray",
+              vmin=np.arcsinh(vmin), vmax=np.arcsinh(vmax))
+
+    if wcs is not None:
+        ax.coords.grid(True, color="cyan", alpha=0.4, linestyle="--", linewidth=0.7)
+        ax.coords["ra"].set_axislabel("RA")
+        ax.coords["dec"].set_axislabel("Dec")
+
+    sources = plate_res.debug.get("sources", {})
+    xs, ys  = sources.get("x", np.array([])), sources.get("y", np.array([]))
+    for x, y in zip(xs, ys):
+        ax.add_patch(Circle((x, y), radius=12,
+                             edgecolor="lime", facecolor="none",
+                             linewidth=0.8, alpha=0.75))
+
+    status = "solved" if plate_res.success else "FAILED"
+    title = f"Plate solve ({status})"
+    if plate_res.success:
+        title += f"  RA={plate_res.ra_deg:.3f}°  Dec={plate_res.dec_deg:.3f}°  rot={plate_res.rot_deg:.2f}°"
+    ax.set_title(title, fontsize=10)
+
+    plt.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+def _show_stripe_angle(
+    stripe_image: np.ndarray,
+    spike_res,
+    save_path: Optional[Path] = None,
+) -> None:
+    """Stripe branch image with ensemble angle line overlay."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    finite = stripe_image[np.isfinite(stripe_image)]
+    vmin, vmax = (np.percentile(finite, [0.5, 99.5]) if finite.size else (0, 1))
+    ax.imshow(stripe_image, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
+
+    angle = spike_res.image_angle_deg
+    if angle is not None:
+        cy, cx = stripe_image.shape[0] / 2.0, stripe_image.shape[1] / 2.0
+        L = float(max(stripe_image.shape))
+        tr = np.radians(angle)
+        ax.plot(
+            [cx - np.cos(tr) * L, cx + np.cos(tr) * L],
+            [cy + np.sin(tr) * L, cy - np.sin(tr) * L],
+            color="lime", linewidth=1.8, alpha=0.9,
+        )
+        label = (f"{angle:.2f}° ± {spike_res.sigma_angle_deg:.2f}°"
+                 f"   Q={spike_res.quality:.3f}"
+                 f"   {spike_res.n_accepted}/{spike_res.n_detected} segs")
+        color = "lime"
+    else:
+        label = "No valid angle solution"
+        color = "red"
+
+    ax.text(0.02, 0.97, label, transform=ax.transAxes, color=color, fontsize=12,
+            fontweight="bold", va="top",
+            bbox=dict(facecolor="black", alpha=0.5, pad=3))
+    ax.set_title("Stripe branch — ensemble angle")
+    ax.axis("off")
+    plt.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
