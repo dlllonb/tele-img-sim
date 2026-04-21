@@ -1,0 +1,56 @@
+# measure_config.toml  —  configuration for measure.py
+# All values here match the call in measurement.ipynb.
+# Run:  python measure.py                          (uses this file)
+#       python measure.py --config my_config.toml  (uses alternate file)
+#       python measure.py --input data/my_image.fit (overrides [io].input_fits)
+
+# ---------------------------------------------------------------------------
+# I/O
+# ---------------------------------------------------------------------------
+[io]
+input_fits        = "data/fuji6_asi178_100_15s.fit"
+output_dir        = "out"
+run_name          = ""        # leave blank for auto-generated name (<stem>_<timestamp>)
+save_outputs      = true      # write FITS branches, summary JSON/TXT, and PNGs
+keep_intermediates = true     # keep branch images in the result object
+verbose           = true      # print progress messages
+
+# ---------------------------------------------------------------------------
+# Display
+# ---------------------------------------------------------------------------
+[display]
+show = true    # show plots interactively (set false for headless/batch use)
+
+# ---------------------------------------------------------------------------
+# Metadata overrides
+# These values take precedence over whatever is in the FITS header.
+# Comment out any line to fall back to the header value.
+# ---------------------------------------------------------------------------
+[metadata_overrides]
+# ra_deg                  = 0.0
+# dec_deg                 = 0.0
+# rot_deg                 = 0.0
+# plate_scale_arcsec_per_px = 1.0
+# exposure_s              = 15.0
+# focal_length_mm         = 100.0
+# f_number                = 2.8
+# pixel_size_um           = 2.4
+# read_noise_e            = 2.0
+# gain_e_per_adu          = 1.0
+# qe                      = 0.6
+# lambda_nm               = 550.0
+# bandwidth_nm            = 300.0
+# jitter_rms_arcsec       = 20.0
+# mask_kind               = "grating"
+# mask_angle_deg          = 23.0
+# grating_lines_per_mm    = 100.0
+
+# ---------------------------------------------------------------------------
+# Metadata defaults
+# These are used only when a value is absent from both the overrides above
+# and the FITS header.
+# ---------------------------------------------------------------------------
+[metadata_defaults]
+# ra_deg                  = 0.0
+# dec_deg                 = 0.0
+# rot_deg                 = 0.0

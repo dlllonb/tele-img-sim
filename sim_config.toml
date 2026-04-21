@@ -1,0 +1,104 @@
+# sim_config.toml  —  configuration for sim.py
+# All values here are the defaults used in notebooks/test/experiments_03.ipynb.
+# Run:  python sim.py                          (uses this file)
+#       python sim.py --config my_config.toml  (uses alternate file)
+
+# ---------------------------------------------------------------------------
+# I/O
+# ---------------------------------------------------------------------------
+[io]
+out_dir    = "out"
+run_name   = "sim_run"          # output goes to out/<run_name>/
+stars_csv  = "sim/physics/starfields/field3.csv"
+overwrite  = true
+
+# ---------------------------------------------------------------------------
+# Pointing
+# ---------------------------------------------------------------------------
+[pointing]
+ra0_deg  = 10.12724197930297
+dec0_deg = 56.53718879378639
+rot_deg  = 0.0                  # camera roll angle (deg, CCW)
+
+# ---------------------------------------------------------------------------
+# Camera
+# ---------------------------------------------------------------------------
+[camera]
+nx            = 3096    # sensor width  (pixels)
+ny            = 2080    # sensor height (pixels)
+pixel_um      = 2.4     # pixel pitch   (microns)
+read_noise_e  = 1.6     # read noise    (electrons RMS)
+gain_e_per_adu = 1.0    # gain          (e⁻/ADU)
+qe            = 0.6     # quantum efficiency [0–1]
+
+# ---------------------------------------------------------------------------
+# Lens
+# ---------------------------------------------------------------------------
+[lens]
+focal_mm     = 25       # focal length  (mm)
+f_number     = 1.2      # f-number
+transmission = 0.8      # total optical throughput [0–1]
+
+# ---------------------------------------------------------------------------
+# Diffraction mask
+# kind:  "none" | "grating" | "spider" | "bitmap"
+# ---------------------------------------------------------------------------
+[mask]
+kind = "grating"
+
+# --- common ---
+angle_deg    = 23       # mask rotation angle (deg)
+psf_size_px  = 513      # PSF kernel array side length (pixels, should be odd)
+# aperture_diam_mm omitted → computed automatically as focal_mm / f_number
+
+# --- grating ---
+grating_model  = "analytic"   # "analytic" | "poppy"
+lines_per_mm   = 100.0        # grating line density (lines/mm)
+duty_cycle     = 0.5          # grating bar fraction [0–1]
+pupil_samples  = 512          # pupil plane sampling for kernel computation
+order_max      = 1            # highest diffraction order to model
+order_rel_amp  = 0.12         # relative amplitude of higher orders
+n_lambda       = 9            # wavelength samples for polychromatic kernel
+
+# --- spider (used when kind = "spider") ---
+spider_model      = "manual"  # "manual" | "poppy"
+n_vanes           = 2
+vane_width_mm     = 0.6
+obstruction_frac  = 0.0
+
+# ---------------------------------------------------------------------------
+# Render
+# ---------------------------------------------------------------------------
+[render]
+exposure_s              = 5.0     # integration time (seconds)
+sky_mu_mag_per_arcsec2  = 21.5    # sky surface brightness (mag/arcsec²)
+zeropoint_e_per_s       = 0.0     # photometric zeropoint override (0 = use built-in)
+lambda_eff_nm           = 550.0   # effective wavelength (nm)
+band_nm                 = 300.0   # bandpass width (nm)
+seeing_fwhm_arcsec      = 2.0     # atmospheric seeing FWHM (arcsec)
+jitter_pointing_rms     = 20.0    # drone pointing jitter RMS (arcsec)
+seed                    = 42      # RNG seed for reproducibility
+
+[render.toggles]
+enable_sky    = true
+enable_stars  = true
+enable_psf    = true
+enable_jitter = true
+enable_noise  = true
+
+# ---------------------------------------------------------------------------
+# Output / display
+# ---------------------------------------------------------------------------
+[output]
+show_plots     = true     # display plots interactively (set false for headless)
+save_pngs      = true     # save PNG outputs to out/<run_name>/
+stages_stretch = "asinh"  # stretch for pipeline-stage grid: "linear"|"asinh"|"log"
+final_stretch  = "asinh"  # stretch for final image display
+q_lo           = 0.0      # lower percentile for display scaling
+q_hi           = 99.0     # upper percentile for display scaling
+
+make_rois      = true     # generate star-ROI montage
+roi_n          = 8        # number of ROI cutouts
+roi_half_size  = 220      # half-width of each cutout (pixels)
+roi_min_sep_px = 180      # minimum star separation for ROI selection (pixels)
+roi_stretch    = "asinh"  # stretch for ROI panel
