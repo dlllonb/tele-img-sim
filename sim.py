@@ -15,8 +15,16 @@ Config file format: TOML (see sim_config.toml for annotated reference).
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from pathlib import Path
+
+# Force UTF-8 output so Unicode characters (degree signs, arrows, etc.) don't
+# crash on Windows terminals that default to cp1252.
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------------------

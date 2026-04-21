@@ -15,7 +15,7 @@ def run_sim_and_report(
     # -----------------------
     out_dir: str = "out",
     run_name: str = "run",
-    stars_csv: str = "sim/physics/starfields/field2.csv",
+    stars_csv: str = "sim/physics/starfields/field3.csv",
     overwrite: bool = True,
 
     # -----------------------

@@ -15,10 +15,18 @@ Config file format: TOML (see measure_config.toml for annotated reference).
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 import warnings
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+# Force UTF-8 output so Unicode characters (degree signs, em-dashes, etc.) don't
+# crash on Windows terminals that default to cp1252.
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # Suppress non-fatal deprecation warnings from third-party libraries so CLI
 # output stays clean.  These are library-author notices, not user errors.

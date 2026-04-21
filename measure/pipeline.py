@@ -35,7 +35,7 @@ def _load_fits(filepath: str) -> Tuple[np.ndarray, fits.Header]:
     if data is None:
         raise ValueError(f"FITS file '{filepath}' contains no data")
     if data.ndim != 2:
-        raise ValueError(f"FITS image must be 2‑D; got ndim={data.ndim}")
+        raise ValueError(f"FITS image must be 2-D; got ndim={data.ndim}")
 
     return data.astype(np.float32), hdr
 
