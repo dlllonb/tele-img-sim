@@ -19,7 +19,7 @@ verbose           = true      # print progress messages
 # Display
 # ---------------------------------------------------------------------------
 [display]
-show = true    # show plots interactively (set false for headless/batch use)
+show = false   # show plots interactively (set false for headless/batch use)
 
 # ---------------------------------------------------------------------------
 # Metadata overrides

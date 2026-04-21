@@ -95,12 +95,20 @@ def _extract_candidates(
     for region in regionprops(label_img, intensity_image=feature_img):
         if region.num_pixels < min_pixels:
             continue
+        major_len = float(
+            getattr(region, "axis_major_length", None)
+            or region.major_axis_length
+        )
+        mean_bright = float(
+            getattr(region, "intensity_mean", None)
+            or region.mean_intensity
+        )
         candidates.append({
             "label":           region.label,
             "angle_deg":       _orientation_to_angle(region.orientation),
-            "major_length":    float(region.major_axis_length),
+            "major_length":    major_len,
             "eccentricity":    float(region.eccentricity),
-            "mean_brightness": float(region.mean_intensity),
+            "mean_brightness": mean_bright,
             "n_pixels":        region.num_pixels,
             "centroid":        region.centroid,
         })

@@ -90,7 +90,7 @@ enable_noise  = true
 # Output / display
 # ---------------------------------------------------------------------------
 [output]
-show_plots     = true     # display plots interactively (set false for headless)
+show_plots     = false    # display plots interactively (set false for headless)
 save_pngs      = true     # save PNG outputs to out/<run_name>/
 stages_stretch = "asinh"  # stretch for pipeline-stage grid: "linear"|"asinh"|"log"
 final_stretch  = "asinh"  # stretch for final image display

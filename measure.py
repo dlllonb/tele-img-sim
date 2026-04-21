@@ -112,7 +112,7 @@ def _config_to_kwargs(cfg: dict, cli_overrides: dict) -> dict:
         "save_outputs":      io.get("save_outputs",       True),
         "keep_intermediates":io.get("keep_intermediates", True),
         "verbose":           io.get("verbose",            True),
-        "show":              display.get("show",          False),
+        "show":              display.get("show",          False),  # default off for CLI
         "overrides":         _build_meta_dict(ov_sec),
         "defaults":          _build_meta_dict(df_sec),
     }

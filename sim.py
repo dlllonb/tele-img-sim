@@ -116,7 +116,7 @@ def _config_to_kwargs(cfg: dict, cli_overrides: dict) -> dict:
         "enable_noise":  toggles.get("enable_noise",  True),
 
         # Output / display
-        "show_plots":     out.get("show_plots",     True),
+        "show_plots":     out.get("show_plots",     False),  # default off for CLI
         "save_pngs":      out.get("save_pngs",      True),
         "stages_stretch": out.get("stages_stretch", "asinh"),
         "final_stretch":  out.get("final_stretch",  "asinh"),
