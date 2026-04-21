@@ -147,7 +147,7 @@ def run_measurement_pipeline(
             save_path=runpath / "platesolve.png" if runpath else None,
         )
         _show_final_result(
-            masked_star_branch.image, plate_res, spike_res, metrics,
+            stripe_branch.image, plate_res, spike_res, metrics,
             save_path=runpath / "final_result.png" if runpath else None,
         )
 
@@ -304,7 +304,7 @@ def _show_stripe_angle(
 
 
 def _show_final_result(
-    star_image: np.ndarray,
+    stripe_image: np.ndarray,
     plate_res,
     spike_res,
     metrics,
@@ -330,13 +330,13 @@ def _show_final_result(
     subplot_kw = {"projection": wcs} if wcs is not None else {}
     fig, ax = plt.subplots(figsize=(11, 9), subplot_kw=subplot_kw)
 
-    finite = star_image[np.isfinite(star_image)]
+    finite = stripe_image[np.isfinite(stripe_image)]
     vmin, vmax = (np.percentile(finite, [0.5, 99.5]) if finite.size else (0, 1))
-    disp = np.arcsinh(np.clip(star_image, vmin, vmax))
+    disp = np.arcsinh(np.clip(stripe_image, vmin, vmax))
     ax.imshow(disp, origin="lower", cmap="gray",
               vmin=np.arcsinh(vmin), vmax=np.arcsinh(vmax))
 
-    h, w = star_image.shape[:2]
+    h, w = stripe_image.shape[:2]
 
     # WCS grid
     if wcs is not None:
