@@ -168,7 +168,9 @@ def run_measurement_pipeline(
     )
 
     if save_outputs and runpath is not None:
-        write_summary(result, runpath)
+        jpath = write_summary(result, runpath)
+        output_paths["summary_json"] = str(jpath)
+        output_paths["summary_txt"]  = str(jpath.with_suffix(".txt"))
         messages.append("wrote summary files")
 
     if verbose:

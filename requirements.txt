@@ -1,0 +1,24 @@
+# Core numerics
+numpy>=1.26
+scipy>=1.13
+
+# Astronomy
+astropy>=6.0
+photutils>=2.0
+astroquery>=0.4.7
+
+# Optics / diffraction kernels (used by mask_kind="grating"/"spider" with poppy backend)
+poppy>=1.1
+
+# Image processing (used by measure/spikes.py for connected-component angle extraction)
+scikit-image>=0.22
+
+# Plotting
+matplotlib>=3.8
+
+# TOML config parsing (built-in as tomllib in Python 3.11+; needed below that)
+tomli>=2.0; python_version < "3.11"
+
+# Jupyter (only needed for notebook use, not for sim.py / measure.py CLI)
+jupyter>=1.0
+ipykernel>=6.0

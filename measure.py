@@ -16,8 +16,24 @@ from __future__ import annotations
 
 import argparse
 import sys
+import warnings
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+# Suppress non-fatal deprecation warnings from third-party libraries so CLI
+# output stays clean.  These are library-author notices, not user errors.
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+try:
+    from astropy.utils.exceptions import AstropyDeprecationWarning
+    warnings.filterwarnings("ignore", category=AstropyDeprecationWarning)
+except ImportError:
+    pass
+try:
+    from astropy.wcs import FITSFixedWarning
+    warnings.filterwarnings("ignore", category=FITSFixedWarning)
+except ImportError:
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +102,8 @@ def _config_to_kwargs(cfg: dict, cli_overrides: dict) -> dict:
     ov_sec  = cfg.get("metadata_overrides", {})
     df_sec  = cfg.get("metadata_defaults",  {})
 
-    run_name = io.get("run_name", "") or None  # blank string → None (auto)
+    # blank run_name → derive from input filename stem (e.g. "fuji6_asi178_100_15s")
+    run_name = io.get("run_name", "") or None
 
     kwargs = {
         "filepath":          io.get("input_fits",         ""),
@@ -102,6 +119,11 @@ def _config_to_kwargs(cfg: dict, cli_overrides: dict) -> dict:
 
     # CLI wins over config
     kwargs.update({k: v for k, v in cli_overrides.items() if v is not None})
+
+    # Derive run_name from input filepath stem if still unset
+    if not kwargs.get("run_name"):
+        kwargs["run_name"] = Path(kwargs["filepath"]).stem
+
     return kwargs
 
 
