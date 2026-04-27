@@ -230,7 +230,7 @@ def run_test():
         f"  Helper (_diffraction_order_offsets_px): {helper_sep_px:.4f} px",
         "",
         "Kernel properties",
-        f"  Shape:  {ky} × {kx}  (centre at row {cy}, col {cx})",
+        f"  Shape:  {ky} x {kx}  (centre at row {cy}, col {cx})",
         f"  Sum:    {kernel_sum:.8f}  (expected 1.0)",
         "",
         "Peak measurement (1-D cross-section along dispersion axis)",
@@ -248,11 +248,12 @@ def run_test():
         "ALL ASSERTIONS PASSED",
     ]
     txt_path = HERE / "test_psf_order_placement.txt"
-    txt_path.write_text("\n".join(lines))
+    #txt_path.write_text("\n".join(lines))
+    txt_path.write_text("\n".join(lines), encoding="utf-8")
 
     print("\n".join(lines))
-    print(f"\nFigure saved → {fig_path.name}")
-    print(f"Summary saved → {txt_path.name}")
+    print(f"\nFigure saved -> {fig_path.name}")
+    print(f"Summary saved -> {txt_path.name}")
 
 
 if __name__ == "__main__":

@@ -103,6 +103,13 @@ def run_test():
     for msg in plate_res.messages:
         print(f"  {msg}")
 
+    # If the solve was never attempted (e.g. missing API key), debug["sources"]
+    # is absent.  Falling through to the figure step would draw circles for
+    # every raw detection (potentially thousands) and hang on savefig.
+    if plate_res.debug.get("sources") is None:
+        print("  Plate solve was not attempted — skipping figure generation.")
+        return
+
     # The platesolve stores the deduped, top-N sources it actually submitted.
     submitted_xs = plate_res.debug.get("sources", {}).get("x", xs_all)
     submitted_ys = plate_res.debug.get("sources", {}).get("y", ys_all)

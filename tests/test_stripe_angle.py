@@ -111,25 +111,38 @@ SIM_KWARGS = dict(
 )
 
 
+from astropy.io import fits
+
+USE_EXISTING_IMAGE = True  # ← DEFAULT: use testsim.fit
+
+
 def run_test():
     # -------------------------------------------------------------------
-    # 1. Run the simulator.
+    # 1. Get image (either load FITS or run simulator)
     # -------------------------------------------------------------------
-    print("Running simulator …")
-    frame, res, _paths = run_sim_and_report(**SIM_KWARGS)
-    image = res.final_e   # float32 electron image, shape (ny, nx)
-    print(f"  Image shape: {image.shape}  peak: {image.max():.0f} e-")
+    if USE_EXISTING_IMAGE:
+        fits_path = HERE / "testsim.fit"
+        print(f"Loading existing FITS image: {fits_path}")
+
+        with fits.open(fits_path) as hdul:
+            image = hdul[0].data.astype(float)
+
+        print(f"  Image shape: {image.shape}  peak: {image.max():.0f}")
+    else:
+        print("Running simulator …")
+        frame, res, _paths = run_sim_and_report(**SIM_KWARGS)
+        image = res.final_e
+        print(f"  Image shape: {image.shape}  peak: {image.max():.0f} e-")
 
     # -------------------------------------------------------------------
-    # 2. Stripe-branch preprocessing (identical to the full pipeline).
+    # 2. Stripe-branch preprocessing (unchanged)
     # -------------------------------------------------------------------
-    meta = MeasurementMetadata()   # no header metadata needed for preprocessing
+    meta = MeasurementMetadata()
     stripe_branch = prepare_stripe_branch_input(image, meta)
     stripe_img = stripe_branch.image
 
     # -------------------------------------------------------------------
-    # 3. Ensemble stripe angle measurement — call sub-functions directly
-    #    so we can access per-segment labels for the visualisation.
+    # 3. Ensemble stripe angle measurement (unchanged)
     # -------------------------------------------------------------------
     feature_img, factor = _prepare_feature_image(stripe_img)
     candidates, label_img = _extract_candidates(feature_img)
@@ -154,6 +167,7 @@ def run_test():
               f"quality={quality:.3f}")
     else:
         print("  No valid angle solution.")
+
 
     # -------------------------------------------------------------------
     # 4. Build the per-segment colour overlay in original image coords.
