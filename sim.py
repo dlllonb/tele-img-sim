@@ -159,8 +159,12 @@ def _parse_args(argv=None):
                    help="Override [io].out_dir.")
     p.add_argument("--stars-csv",dest="stars_csv",default=None,
                    help="Override [io].stars_csv.")
-    p.add_argument("--no-show",  dest="show_plots", action="store_false",
-                   default=None, help="Suppress interactive plots.")
+    show_grp = p.add_mutually_exclusive_group()
+    show_grp.add_argument("--show",    dest="show_plots", action="store_true",
+                          help="Enable interactive plots.")
+    show_grp.add_argument("--no-show", dest="show_plots", action="store_false",
+                          help="Suppress interactive plots.")
+    p.set_defaults(show_plots=None)
     p.add_argument("--no-save",  dest="save_pngs",  action="store_false",
                    default=None, help="Skip PNG/FITS output.")
     return p.parse_args(argv)

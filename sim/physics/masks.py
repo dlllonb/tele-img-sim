@@ -1,7 +1,8 @@
 # sim/physics/masks.py
 import numpy as np
 import astropy.units as u
-import poppy
+# poppy is imported lazily inside the _kernel_poppy_* functions so that the
+# analytic and manual backends work without poppy installed.
 
 
 def kernel_for_mask(frame, cfg, sigma_px: float, mask) -> np.ndarray:
@@ -41,6 +42,7 @@ def _kernel_poppy_grating(frame, cfg, sigma_px: float, mask) -> np.ndarray:
       - Keeps the user-facing parameters the same: lines_per_mm, duty_cycle, angle_deg.
       - Optional hidden knob: mask.grating_fourier_terms (default 7).
     """
+    import poppy
     from .psf import _gaussian_kernel
 
     # -----------------------------
@@ -212,6 +214,7 @@ def _kernel_poppy_grating(frame, cfg, sigma_px: float, mask) -> np.ndarray:
 
 def _kernel_poppy_newtonian(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     # monochromatic version
+    import poppy
 
     # ---- telescope geometry ----
     D = float(getattr(mask, "aperture_diam_mm", 203.2)) * u.mm
@@ -272,6 +275,7 @@ def _kernel_poppy_newtonian(frame, cfg, sigma_px: float, mask) -> np.ndarray:
 
 def _kernel_poppy_spider(frame, cfg, sigma_px: float, mask) -> np.ndarray:
     # polychromatic implementation
+    import poppy
 
     # ---- telescope geometry ----
     D = float(getattr(mask, "aperture_diam_mm", 203.2)) * u.mm

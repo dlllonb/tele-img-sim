@@ -136,20 +136,24 @@ def run_measurement_pipeline(
     metrics = compute_metrics(plate_res, spike_res, meta)
     messages.append("metrics computed")
 
-    # 6. display — each result shown exactly once
-    if show:
-        _show_stripe_angle(
-            stripe_branch.image, spike_res,
-            save_path=runpath / "stripe_angle.png" if runpath else None,
-        )
+    # 6. diagnostic PNGs — always saved when save_outputs=True; displayed when show=True
+    if save_outputs and runpath is not None:
         _show_platesolve(
             masked_star_branch.image, plate_res,
-            save_path=runpath / "platesolve.png" if runpath else None,
+            save_path=runpath / "platesolve.png", show=show,
         )
+        output_paths["platesolve_png"] = str(runpath / "platesolve.png")
         _show_final_result(
             stripe_branch.image, plate_res, spike_res, metrics,
-            save_path=runpath / "final_result.png" if runpath else None,
+            save_path=runpath / "final_result.png", show=show,
         )
+        output_paths["final_result_png"] = str(runpath / "final_result.png")
+        if show:
+            _show_stripe_angle(stripe_branch.image, spike_res, show=True)
+    elif show:
+        _show_stripe_angle(stripe_branch.image, spike_res, show=True)
+        _show_platesolve(masked_star_branch.image, plate_res, show=True)
+        _show_final_result(stripe_branch.image, plate_res, spike_res, metrics, show=True)
 
     # determine overall success
     success = bool(metrics.sky_angle_deg is not None)
@@ -203,6 +207,7 @@ def _show_platesolve(
     star_image: np.ndarray,
     plate_res,
     save_path: Optional[Path] = None,
+    show: bool = False,
 ) -> None:
     """Star branch image with WCS sky-grid overlay and detected sources circled."""
     try:
@@ -250,7 +255,8 @@ def _show_platesolve(
     plt.tight_layout()
     if save_path is not None:
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.show()
+    if show:
+        plt.show()
     plt.close(fig)
 
 
@@ -258,6 +264,7 @@ def _show_stripe_angle(
     stripe_image: np.ndarray,
     spike_res,
     save_path: Optional[Path] = None,
+    show: bool = False,
 ) -> None:
     """Stripe branch image with ensemble angle line overlay."""
     try:
@@ -301,7 +308,8 @@ def _show_stripe_angle(
     plt.tight_layout()
     if save_path is not None:
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.show()
+    if show:
+        plt.show()
     plt.close(fig)
 
 
@@ -311,6 +319,7 @@ def _show_final_result(
     spike_res,
     metrics,
     save_path: Optional[Path] = None,
+    show: bool = False,
 ) -> None:
     """Combined summary: WCS grid, source circles, north arrow, spectra orientation."""
     try:
@@ -436,5 +445,6 @@ def _show_final_result(
     plt.tight_layout()
     if save_path is not None:
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.show()
+    if show:
+        plt.show()
     plt.close(fig)

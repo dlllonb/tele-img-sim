@@ -6,6 +6,7 @@ scipy>=1.13
 astropy>=6.0
 photutils>=2.0
 astroquery>=0.4.7
+requests>=2.28
 
 # Optics / diffraction kernels (used by mask_kind="grating"/"spider" with poppy backend)
 poppy>=1.1

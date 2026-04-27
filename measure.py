@@ -152,8 +152,12 @@ def _parse_args(argv=None):
                    help="Override [io].run_name.")
     p.add_argument("--out-dir",  dest="out_dir",   default=None,
                    help="Override [io].output_dir.")
-    p.add_argument("--no-show",  dest="show", action="store_false",
-                   default=None, help="Suppress interactive plots.")
+    show_grp = p.add_mutually_exclusive_group()
+    show_grp.add_argument("--show",    dest="show", action="store_true",
+                          help="Enable interactive plots.")
+    show_grp.add_argument("--no-show", dest="show", action="store_false",
+                          help="Suppress interactive plots.")
+    p.set_defaults(show=None)
     p.add_argument("--no-save",  dest="save_outputs", action="store_false",
                    default=None, help="Skip output files.")
     return p.parse_args(argv)
