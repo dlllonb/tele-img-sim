@@ -34,10 +34,22 @@ class Frame:
     
     def pixel_to_radec(self, x_px, y_px):
         """
-        Small-angle pixel -> (RA, Dec) mapping.
+        Exact gnomonic (TAN) pixel -> (RA, Dec) mapping.
 
         x_px, y_px can be scalars or numpy arrays (pixel coordinates).
         Returns (ra_deg, dec_deg) with same shape.
+
+        NOTE: prior to 2026-08-15 this used a small-angle approximation
+        (dec = dec0 + y, ra = ra0 + x/cos(dec0)) that is only accurate
+        near the tangent point. At this project's wide FOV (~8.6x5.8 deg)
+        and the moderate-to-high declinations several sim fields use, that
+        approximation diverges from a true gnomonic projection by up to
+        several hundred pixels near the field edges -- large enough to
+        corrupt the relative star-to-star geometry astrometry.net's
+        quad-hash matching depends on for wide-separation quads (see
+        new_results.txt Entry 47). Replaced with the standard exact
+        gnomonic inverse (e.g. Calabretta & Greisen 2002, "Representations
+        of celestial coordinates in FITS", TAN projection).
         """
         x_px = np.asarray(x_px, dtype=float)
         y_px = np.asarray(y_px, dtype=float)
@@ -63,29 +75,49 @@ class Frame:
         ra0 = math.radians(self.ra0_deg)
         dec0 = math.radians(self.dec0_deg)
 
-        dec = dec0 + y
-        ra  = ra0 + x / max(1e-12, math.cos(dec0))
+        # exact gnomonic (TAN) inverse: (x,y) tangent-plane radians -> (ra,dec)
+        rho = np.hypot(x, y)
+        c_ang = np.arctan(rho)
+        sin_c, cos_c = np.sin(c_ang), np.cos(c_ang)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            dec = np.where(
+                rho < 1e-12,
+                dec0,
+                np.arcsin(cos_c * math.sin(dec0) + (y * sin_c * math.cos(dec0)) / np.where(rho < 1e-12, 1.0, rho)),
+            )
+            ra = ra0 + np.where(
+                rho < 1e-12,
+                0.0,
+                np.arctan2(x * sin_c, rho * math.cos(dec0) * cos_c - y * math.sin(dec0) * sin_c),
+            )
 
         return np.degrees(ra), np.degrees(dec)
 
-    
+
     def radec_to_pixel(self, ra_deg, dec_deg):
         """
-        Small-angle (RA, Dec) -> pixel mapping.
+        Exact gnomonic (TAN) (RA, Dec) -> pixel mapping.
 
         ra_deg, dec_deg can be scalars or numpy arrays.
         Returns (x_px, y_px) with same shape.
+
+        See `pixel_to_radec`'s docstring for why this replaced the prior
+        small-angle approximation (2026-08-15, new_results.txt Entry 47).
         """
         ra_deg = np.asarray(ra_deg, dtype=float)
         dec_deg = np.asarray(dec_deg, dtype=float)
-    
+
         # wrap RA difference into [-180, 180] degrees to handle 0/360 boundary
         dra_deg = (ra_deg - self.ra0_deg + 180.0) % 360.0 - 180.0
-    
+
         dec0 = math.radians(self.dec0_deg)
-    
-        x = np.radians(dra_deg) * math.cos(dec0)
-        y = np.radians(dec_deg - self.dec0_deg)
+        dra = np.radians(dra_deg)
+        dec = np.radians(dec_deg)
+
+        # exact gnomonic (TAN) forward: (ra,dec) -> (x,y) tangent-plane radians
+        cos_c = math.sin(dec0) * np.sin(dec) + math.cos(dec0) * np.cos(dec) * np.cos(dra)
+        x = np.cos(dec) * np.sin(dra) / cos_c
+        y = (math.cos(dec0) * np.sin(dec) - math.sin(dec0) * np.cos(dec) * np.cos(dra)) / cos_c
 
         # apply rotation (to match make_blank_frame)
         if self.rot_deg != 0.0:
