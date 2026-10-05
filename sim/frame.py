@@ -700,6 +700,8 @@ def save_frame_fits(path,
         # psf / jitter toggles
         if hasattr(cfg, "psf_sigma_px"):           hdr["PSFSIG"]  = (float(cfg.psf_sigma_px), "Gaussian PSF sigma [px]")
         if hasattr(cfg, "jitter_pointing_rms"):    hdr["JITRMS"]  = (float(cfg.jitter_pointing_rms), "Pointing jitter RMS [arcsec]")
+        if float(getattr(cfg, "distortion_corner_frac", 0.0)):
+            hdr["DISTCORN"] = (float(cfg.distortion_corner_frac), "Radial distortion at corner (fraction)")
 
         # stage toggles
         for k, key in [

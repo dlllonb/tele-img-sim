@@ -26,6 +26,9 @@ class RenderConfig:
 
     # --- optics ---o
     mask: Mask = Mask()
+    # radial lens distortion at the sensor corner (fraction; vector_grating only, see
+    # sim/physics/vector_grating.py). 0 = none (default, unchanged behaviour).
+    distortion_corner_frac: float = 0.0
     psf_sigma_px: float = 1.0
 
     # --- jitter ---
@@ -75,11 +78,15 @@ def _vector_stars_layer(frame, stars, cfg):
     if p is None:
         vg.splat_bilinear(img, x_all, y_all, f_all)
         return img.astype(np.float32), p
-    # zeroth order: exactly the legacy star set (2 px margin)
-    on = (x_all >= -2.0) & (x_all <= nx - 1 + 2.0) & (y_all >= -2.0) & (y_all <= ny - 1 + 2.0)
-    vg.splat_bilinear(img, x_all[on], y_all[on], f_all[on] * float(p["w_m"][0]))
-    # diffracted orders: all stars within the trace pad
+    k = vg.distortion_k_px(frame, float(getattr(cfg, "distortion_corner_frac", 0.0)))
+    # zeroth order: exactly the legacy star set (2 px margin), after distortion if any
+    xd, yd = vg.distort_pixels(frame, x_all, y_all, k)
+    on = (xd >= -2.0) & (xd <= nx - 1 + 2.0) & (yd >= -2.0) & (yd <= ny - 1 + 2.0)
+    vg.splat_bilinear(img, xd[on], yd[on], f_all[on] * float(p["w_m"][0]))
+    # diffracted orders: all stars within the trace pad (geometry in undistorted
+    # gnomonic coordinates, then the SAME distortion map as the stars)
     xs, ys, ws = vg.trace_samples(frame, p, mask, x_all, y_all, f_all)
+    xs, ys = vg.distort_pixels(frame, xs, ys, k)
     vg.splat_bilinear(img, xs, ys, ws)
     return img.astype(np.float32), p
 
@@ -141,8 +148,13 @@ def render(frame: Frame,
     # ---- 2) stars layer (electrons, pre-PSF) ----
     vector = _is_vector_grating(cfg)
     vparams = None
+    if float(getattr(cfg, "distortion_corner_frac", 0.0)) and not vector:
+        raise ValueError("lens distortion is only supported with mask.trace_model='vector_grating' "
+                         "(the legacy kernel cannot distort traces consistently with stars)")
     if vector:
         res.truth = vg.truth_vectors(frame, cfg.mask)
+        res.truth["distortion_corner_frac"] = float(getattr(cfg, "distortion_corner_frac", 0.0))
+        res.truth["distortion_k_px"] = vg.distortion_k_px(frame, res.truth["distortion_corner_frac"])
     if cfg.enable_stars and vector:
         stars_e, vparams = _vector_stars_layer(frame, stars, cfg)
     elif cfg.enable_stars:

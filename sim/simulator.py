@@ -70,6 +70,8 @@ def run_sim_and_report(
     mask_tilt_deg: float = 0.0,
     mask_tilt_axis_deg: float = 0.0,
     mask_trace_pad_px: float = 0.0,
+    mask_smear_cap: int = 250,                 # max wavelength samples per order side (legacy default 250)
+    lens_distortion_corner_frac: float = 0.0,  # radial distortion at the corner (vector_grating only)
 
     # -----------------------
     # Render config
@@ -184,6 +186,7 @@ def run_sim_and_report(
         tilt_deg=float(mask_tilt_deg),
         tilt_axis_deg=float(mask_tilt_axis_deg),
         trace_pad_px=float(mask_trace_pad_px),
+        smear_cap=int(mask_smear_cap),
     )
 
     # probably shouldn't do this here but its easy for now
@@ -203,6 +206,7 @@ def run_sim_and_report(
         mask=mask,
 
         jitter_pointing_rms=float(jitter_pointing_rms),
+        distortion_corner_frac=float(lens_distortion_corner_frac),
 
         enable_sky=bool(enable_sky),
         enable_stars=bool(enable_stars),

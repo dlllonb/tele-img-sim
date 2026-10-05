@@ -319,3 +319,35 @@ def truth_vectors(frame, mask) -> dict:
                 cam_to_icrs=M.tolist(), cam_to_icrs_ortho_err=ortho_err,
                 tilt_deg=float(getattr(mask, "tilt_deg", 0.0)),
                 tilt_axis_deg=float(getattr(mask, "tilt_axis_deg", 0.0)))
+
+
+# ---------------------------------------------------------------------------
+# Radial lens distortion (vector_grating only; distortion track D0)
+# ---------------------------------------------------------------------------
+# Model, in pixel offsets from the optical axis (image centre):
+#     undistorted = distorted * (1 + k * r_d^2)            (r_d = |distorted offset| in px)
+# i.e. the pixel -> sky direction is an exact 3rd-order polynomial, so a TAN-SIP WCS
+# with A_3_0 = A_1_2 = B_2_1 = B_0_3 = k represents it EXACTLY ("oracle WCS").
+# k > 0 is barrel distortion. corner_frac = k * r_corner^2 is the fractional radial
+# displacement at the sensor corner (e.g. 0.005 = 0.5 %). The same map is applied to
+# zeroth-order stars and to every diffracted sample, so stars and traces share one
+# optical model.
+
+def distortion_k_px(frame, corner_frac: float) -> float:
+    ny, nx = frame.image.shape
+    r_corner = np.hypot((nx - 1) / 2.0, (ny - 1) / 2.0)
+    return float(corner_frac) / r_corner ** 2
+
+
+def distort_pixels(frame, x, y, k: float, n_iter: int = 60):
+    """Undistorted (gnomonic) pixel positions -> distorted (as recorded) positions."""
+    if not k:
+        return x, y
+    ny, nx = frame.image.shape
+    cx, cy = (nx - 1) / 2.0, (ny - 1) / 2.0
+    u, v = np.asarray(x, float) - cx, np.asarray(y, float) - cy
+    ud, vd = u.copy(), v.copy()
+    for _ in range(n_iter):
+        s = 1.0 + k * (ud * ud + vd * vd)
+        ud, vd = u / s, v / s
+    return ud + cx, vd + cy
