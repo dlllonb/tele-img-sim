@@ -85,9 +85,16 @@ def _vector_stars_layer(frame, stars, cfg):
     vg.splat_bilinear(img, xd[on], yd[on], f_all[on] * float(p["w_m"][0]))
     # diffracted orders: all stars within the trace pad (geometry in undistorted
     # gnomonic coordinates, then the SAME distortion map as the stars)
-    xs, ys, ws = vg.trace_samples(frame, p, mask, x_all, y_all, f_all)
-    xs, ys = vg.distort_pixels(frame, xs, ys, k)
-    vg.splat_bilinear(img, xs, ys, ws)
+    # Stars are processed in chunks: with dense wavelength sampling (smear_cap ~2000) and
+    # off-sensor padding there are ~10^7 samples per image, and doing them all at once
+    # needed several GB per process (overnight run, 2026-10-05). Chunking changes only the
+    # floating-point summation order of the splat, not the physics.
+    chunk = 256
+    for i0 in range(0, len(x_all), chunk):
+        sl = slice(i0, i0 + chunk)
+        xs, ys, ws = vg.trace_samples(frame, p, mask, x_all[sl], y_all[sl], f_all[sl])
+        xs, ys = vg.distort_pixels(frame, xs, ys, k)
+        vg.splat_bilinear(img, xs, ys, ws)
     return img.astype(np.float32), p
 
 
