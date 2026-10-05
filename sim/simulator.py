@@ -66,6 +66,10 @@ def run_sim_and_report(
     mask_duty_cycle: float = 0.5,
     mask_pupil_samples: int = 512,
     mask_n_lambda: int = 9,
+    mask_trace_model: str = "legacy_kernel",   # "legacy_kernel" | "vector_grating"
+    mask_tilt_deg: float = 0.0,
+    mask_tilt_axis_deg: float = 0.0,
+    mask_trace_pad_px: float = 0.0,
 
     # -----------------------
     # Render config
@@ -176,6 +180,10 @@ def run_sim_and_report(
         duty_cycle=float(mask_duty_cycle),
         pupil_samples=int(mask_pupil_samples),
         n_lambda=int(mask_n_lambda),
+        trace_model=str(mask_trace_model),
+        tilt_deg=float(mask_tilt_deg),
+        tilt_axis_deg=float(mask_tilt_axis_deg),
+        trace_pad_px=float(mask_trace_pad_px),
     )
 
     # probably shouldn't do this here but its easy for now

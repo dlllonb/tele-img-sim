@@ -55,6 +55,13 @@ class Mask:
     smear_step_px: float = 0.75
     smear_cap: int = 250
     smear_profile: str = "raised_cosine"
+    # Trace geometry model (see sim/physics/vector_grating.py):
+    #   "legacy_kernel"  -- one shift-invariant straight-segment kernel (default, unchanged)
+    #   "vector_grating" -- exact per-star vector grating equation (conical diffraction)
+    trace_model: str = "legacy_kernel"
+    tilt_deg: float = 0.0          # camera--grid tilt (vector_grating only)
+    tilt_axis_deg: float = 0.0     # in-plane direction of the tilt axis, CCW from +x
+    trace_pad_px: float = 0.0      # also render traces of stars this far OFF the sensor (vector only)
     
 
     # --- Bitmap params (for kind="bitmap") ---

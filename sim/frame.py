@@ -717,6 +717,11 @@ def save_frame_fits(path,
         if m is not None:
             hdr["MASKKIND"] = (str(getattr(m, "kind", "none")), "Mask kind")
             if hasattr(m, "angle_deg"): hdr["MASKANG"] = (float(m.angle_deg), "Mask angle [deg]")
+            if getattr(m, "trace_model", "legacy_kernel") != "legacy_kernel":
+                hdr["TRMODEL"] = (str(m.trace_model), "Grating trace geometry model")
+                hdr["TILTDEG"] = (float(getattr(m, "tilt_deg", 0.0)), "Camera-grid tilt [deg]")
+                hdr["TILTAX"] = (float(getattr(m, "tilt_axis_deg", 0.0)), "Tilt axis angle [deg]")
+                hdr["TRPAD"] = (float(getattr(m, "trace_pad_px", 0.0)), "Off-sensor trace star pad [px]")
 
             # spider
             if hasattr(m, "n_vanes"):        hdr["SPVN"]   = (int(m.n_vanes), "Spider: number of vane lines")

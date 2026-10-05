@@ -4,8 +4,9 @@ import numpy as np
 
 from .frame import Frame
 from .mask import Mask
-from .physics.stars import stars_layer
-from .physics.psf import apply_psf
+from .physics.stars import stars_layer, star_pixels_and_flux
+from .physics.psf import apply_psf, _fft_convolve_same
+from .physics import vector_grating as vg
 from .physics.jitter import apply_jitter
 from .physics.noise import apply_noise
 from .physics.sky import sky_layer
@@ -50,6 +51,37 @@ class RenderResult:
     mean_e: np.ndarray | None = None
     after_jitter_e: np.ndarray | None = None
     final_e: np.ndarray | None = None
+    # ground truth metadata (vector_grating only: grid triad + boresight in ICRS)
+    truth: dict | None = None
+
+
+def _is_vector_grating(cfg) -> bool:
+    mask = getattr(cfg, "mask", None)
+    return (mask is not None and getattr(mask, "kind", "none") == "grating"
+            and getattr(mask, "trace_model", "legacy_kernel") == "vector_grating")
+
+
+def _vector_stars_layer(frame, stars, cfg):
+    """Pre-PSF electrons: zeroth order (flux * w_m[0]) + every diffracted
+    sample from the exact vector grating equation (sim/physics/vector_grating.py)."""
+    mask = cfg.mask
+    if getattr(mask, "grating_model", "analytic") != "analytic":
+        raise NotImplementedError('trace_model="vector_grating" requires grating_model="analytic"')
+    p = vg.grating_params(frame, cfg, float(getattr(cfg, "psf_sigma_px", 0.0)), mask)
+    ny, nx = frame.image.shape
+    img = np.zeros((ny, nx), dtype=np.float64)
+    pad = max(2.0, float(getattr(mask, "trace_pad_px", 0.0)))
+    x_all, y_all, f_all = star_pixels_and_flux(frame, stars, cfg, margin=pad)
+    if p is None:
+        vg.splat_bilinear(img, x_all, y_all, f_all)
+        return img.astype(np.float32), p
+    # zeroth order: exactly the legacy star set (2 px margin)
+    on = (x_all >= -2.0) & (x_all <= nx - 1 + 2.0) & (y_all >= -2.0) & (y_all <= ny - 1 + 2.0)
+    vg.splat_bilinear(img, x_all[on], y_all[on], f_all[on] * float(p["w_m"][0]))
+    # diffracted orders: all stars within the trace pad
+    xs, ys, ws = vg.trace_samples(frame, p, mask, x_all, y_all, f_all)
+    vg.splat_bilinear(img, xs, ys, ws)
+    return img.astype(np.float32), p
 
 
 def _stop_here(stop_after: str | None, stage: str) -> bool:
@@ -107,7 +139,13 @@ def render(frame: Frame,
         return (frame, res) if return_intermediates else frame
 
     # ---- 2) stars layer (electrons, pre-PSF) ----
-    if cfg.enable_stars:
+    vector = _is_vector_grating(cfg)
+    vparams = None
+    if vector:
+        res.truth = vg.truth_vectors(frame, cfg.mask)
+    if cfg.enable_stars and vector:
+        stars_e, vparams = _vector_stars_layer(frame, stars, cfg)
+    elif cfg.enable_stars:
         stars_e = stars_layer(frame, stars, cfg, rng=rng)
     else:
         stars_e = np.zeros((ny, nx), dtype=np.float32)
@@ -118,7 +156,10 @@ def render(frame: Frame,
         return (frame, res) if return_intermediates else frame
 
     # ---- 3) PSF ----
-    if cfg.enable_psf:
+    if cfg.enable_psf and vector and vparams is not None and float(getattr(cfg, "psf_sigma_px", 0.0)) > 0.0:
+        # orders are already placed: convolve with the legacy grating kernel's spot alone
+        stars_psf_e = _fft_convolve_same(stars_e, vg.spot_kernel(vparams)).astype(np.float32, copy=False)
+    elif cfg.enable_psf:
         stars_psf_e = apply_psf(stars_e, frame, cfg)
     else:
         stars_psf_e = stars_e

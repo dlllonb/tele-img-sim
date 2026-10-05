@@ -86,22 +86,15 @@ def derive_zeropoint_e_per_s(lens, qe: float, lambda_eff_nm: float, band_nm: flo
 StarsInput = Union[None, str, Path, StarField]
 
 
-def stars_layer(frame, stars: StarsInput, cfg, rng=None):
+def star_pixels_and_flux(frame, stars: StarsInput, cfg, margin: float = 2.0):
     """
-    Stars-only expected electrons image (float), pre-PSF.
-
-    Steps:
-      - resolve StarField (file or object)
-      - compute per-star expected electrons from mag using derived or provided zeropoint
-      - map RA/Dec -> (x_px, y_px)
-      - cut to frame (+margin)
-      - bilinear splat into pixels
+    Expected electrons and pixel positions of every catalog star within
+    `margin` px of the sensor (same arithmetic stars_layer has always used).
+    Returns (x_px, y_px, flux_e); empty arrays if stars is None.
     """
-    if rng is None:
-        rng = np.random.default_rng(getattr(cfg, "seed", 0))
-
     if stars is None:
-        return np.zeros_like(frame.image, dtype=np.float32)
+        e = np.array([], dtype=float)
+        return e, e, e
 
     if isinstance(stars, StarField):
         sf = stars
@@ -132,11 +125,29 @@ def stars_layer(frame, stars: StarsInput, cfg, rng=None):
     ny, nx = frame.image.shape
 
     # Cut to on-sensor with a small margin (for PSF wings later)
-    margin = 2.0  # px (small for now)
     keep = (x_px >= -margin) & (x_px <= (nx - 1) + margin) & (y_px >= -margin) & (y_px <= (ny - 1) + margin)
-    x_px = x_px[keep]
-    y_px = y_px[keep]
-    flux_e = flux_e[keep]
+    return x_px[keep], y_px[keep], flux_e[keep]
+
+
+def stars_layer(frame, stars: StarsInput, cfg, rng=None):
+    """
+    Stars-only expected electrons image (float), pre-PSF.
+
+    Steps:
+      - resolve StarField (file or object)
+      - compute per-star expected electrons from mag using derived or provided zeropoint
+      - map RA/Dec -> (x_px, y_px)
+      - cut to frame (+margin)
+      - bilinear splat into pixels
+    """
+    if rng is None:
+        rng = np.random.default_rng(getattr(cfg, "seed", 0))
+
+    if stars is None:
+        return np.zeros_like(frame.image, dtype=np.float32)
+
+    x_px, y_px, flux_e = star_pixels_and_flux(frame, stars, cfg, margin=2.0)  # px (small for now)
+    ny, nx = frame.image.shape
 
     stars_e = np.zeros((ny, nx), dtype=np.float32)
 
