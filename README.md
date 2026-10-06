@@ -18,7 +18,7 @@ The render pipeline runs in stages:
 
 1. **Sky background** — uniform sky glow from a configurable surface brightness
 2. **Stars** — a star catalogue (CSV) is projected onto the sensor; flux scales with exposure time and photometric zeropoint
-3. **PSF / diffraction** — convolved with a Gaussian seeing kernel, or a physically-modelled diffraction kernel when a grating or spider mask is active
+3. **PSF / diffraction** — convolved with a Gaussian seeing kernel, or a physically-modelled diffraction kernel when a grating or spider mask is active. For the analytic grating, `mask_trace_model="vector_grating"` instead renders every star's orders with the exact vector grating equation (conical diffraction: off-axis traces are rotated and slightly curved) through the same projection as the stars; the default `"legacy_kernel"` draws straight segments at one fixed pixel angle
 4. **Jitter** — an additional Gaussian blur from drone pointing instability (arcsec RMS)
 5. **Noise** — Poisson shot noise + Gaussian read noise
 
@@ -136,6 +136,21 @@ frame, res, paths = run_sim_and_report(
     jitter_pointing_rms=20.0,
     show_plots=True,
 )
+```
+
+Physical (conical-diffraction) traces and related options:
+
+```python
+frame, res, paths = run_sim_and_report(
+    ...,
+    mask_trace_model="vector_grating",   # exact vector grating equation per star
+    mask_trace_pad_px=1600.0,            # also render traces of stars this far off the sensor
+    mask_smear_cap=2000,                 # wavelength samples per order side (<= 0.5 px apart)
+    mask_tilt_deg=0.0,                   # optional camera--grid tilt ...
+    mask_tilt_axis_deg=0.0,              # ... about this in-plane axis
+    lens_distortion_corner_frac=0.0,     # optional radial distortion (e.g. 0.005 = 0.5 % at the corner)
+)
+res.truth  # ICRS grating vector, wire direction, grid normal and boresight
 ```
 
 ---
