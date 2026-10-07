@@ -15,11 +15,14 @@ class StarField:
     dec_deg: np.ndarray
     mag: np.ndarray
     meta: dict | None = None
+    bp_rp: np.ndarray | None = None      # Gaia BP-RP colour, if the catalog has it (NaN allowed)
 
     def __post_init__(self):
         n = len(self.ra_deg)
         if len(self.dec_deg) != n or len(self.mag) != n:
             raise ValueError("StarField arrays must have the same length.")
+        if self.bp_rp is not None and len(self.bp_rp) != n:
+            raise ValueError("StarField bp_rp must have the same length as the positions.")
 
 
 def load_star_field(path: str | Path) -> StarField:
@@ -49,10 +52,14 @@ def load_star_field(path: str | Path) -> StarField:
     else:
         raise ValueError(f"Unrecognized star field columns: {arr.dtype.names}")
 
+    bp_rp = np.array(arr["bp_rp"], dtype=float) if "bp_rp" in cols else None
+
     m = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(mag)
     ra, dec, mag = ra[m], dec[m], mag[m]
+    if bp_rp is not None:
+        bp_rp = bp_rp[m]
 
-    return StarField(ra_deg=ra, dec_deg=dec, mag=mag, meta={"source": str(path)})
+    return StarField(ra_deg=ra, dec_deg=dec, mag=mag, meta={"source": str(path)}, bp_rp=bp_rp)
 
 
 def derive_zeropoint_e_per_s(lens, qe: float, lambda_eff_nm: float, band_nm: float) -> float:
@@ -86,15 +93,17 @@ def derive_zeropoint_e_per_s(lens, qe: float, lambda_eff_nm: float, band_nm: flo
 StarsInput = Union[None, str, Path, StarField]
 
 
-def star_pixels_and_flux(frame, stars: StarsInput, cfg, margin: float = 2.0):
+def star_pixels_and_flux(frame, stars: StarsInput, cfg, margin: float = 2.0, return_colour: bool = False):
     """
     Expected electrons and pixel positions of every catalog star within
     `margin` px of the sensor (same arithmetic stars_layer has always used).
-    Returns (x_px, y_px, flux_e); empty arrays if stars is None.
+    Returns (x_px, y_px, flux_e); empty arrays if stars is None. With
+    return_colour=True also returns the stars' Gaia BP-RP (NaN if the catalog
+    has no colours).
     """
     if stars is None:
         e = np.array([], dtype=float)
-        return e, e, e
+        return (e, e, e, e) if return_colour else (e, e, e)
 
     if isinstance(stars, StarField):
         sf = stars
@@ -126,6 +135,9 @@ def star_pixels_and_flux(frame, stars: StarsInput, cfg, margin: float = 2.0):
 
     # Cut to on-sensor with a small margin (for PSF wings later)
     keep = (x_px >= -margin) & (x_px <= (nx - 1) + margin) & (y_px >= -margin) & (y_px <= (ny - 1) + margin)
+    if return_colour:
+        c = sf.bp_rp if sf.bp_rp is not None else np.full(len(sf.mag), np.nan)
+        return x_px[keep], y_px[keep], flux_e[keep], np.asarray(c, float)[keep]
     return x_px[keep], y_px[keep], flux_e[keep]
 
 

@@ -702,6 +702,10 @@ def save_frame_fits(path,
         if hasattr(cfg, "jitter_pointing_rms"):    hdr["JITRMS"]  = (float(cfg.jitter_pointing_rms), "Pointing jitter RMS [arcsec]")
         if float(getattr(cfg, "distortion_corner_frac", 0.0)):
             hdr["DISTCORN"] = (float(cfg.distortion_corner_frac), "Radial distortion at corner (fraction)")
+        if float(getattr(cfg, "distortion_k2_corner_frac", 0.0)):
+            hdr["DISTK2C"] = (float(cfg.distortion_k2_corner_frac), "5th-order radial distortion at corner (frac)")
+        if bool(getattr(cfg, "stellar_colours", False)):
+            hdr["STARCOL"] = (True, "Per-star spectra from Gaia BP-RP")
         if float(getattr(cfg, "lateral_colour_ppm_per_nm", 0.0)):
             hdr["LATCOL"] = (float(cfg.lateral_colour_ppm_per_nm), "Lateral colour [ppm/nm]")
             hdr["LATCOLRF"] = (float(cfg.lateral_colour_ref_nm), "Lateral colour reference wavelength [nm]")

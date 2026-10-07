@@ -29,6 +29,12 @@ class RenderConfig:
     # radial lens distortion at the sensor corner (fraction; vector_grating only, see
     # sim/physics/vector_grating.py). 0 = none (default, unchanged behaviour).
     distortion_corner_frac: float = 0.0
+    # fifth-order radial term: undistorted = distorted (1 + k r^2 + k2 r^4), k2 r_corner^4 = this.
+    # Not representable by a 3rd-order SIP solution. 0 = none (default).
+    distortion_k2_corner_frac: float = 0.0
+    # stellar colours (vector_grating only; sim/physics/stellar_colour.py): per-star spectra from
+    # the catalog's Gaia BP-RP. Off by default (all stars share the colourless band weights).
+    stellar_colours: bool = False
     # lateral colour (vector_grating only): wavelength-dependent radial magnification of the
     # diffracted samples, ppm per nm relative to lateral_colour_ref_nm (the wavelength at which
     # the broadband zeroth-order stars are imaged). 0 = none (default, unchanged behaviour).
@@ -43,6 +49,7 @@ class RenderConfig:
     refraction_zenith_pa_deg: float = 0.0
     refraction_pressure_hpa: float = 1013.25
     refraction_temperature_c: float = 15.0
+    refraction_relative_humidity: float = 0.0   # water-vapour term (simulator-side detail)
     refraction_ref_nm: float = 550.0
     psf_sigma_px: float = 1.0
 
@@ -90,7 +97,8 @@ def _refraction_setup(frame, cfg):
     Z_icrs = zenith_from_field(b_icrs, z0, float(getattr(cfg, "refraction_zenith_pa_deg", 0.0)))
     return dict(zenith_cam=np.linalg.solve(M, Z_icrs), zenith_icrs=Z_icrs,
                 pressure_hpa=float(getattr(cfg, "refraction_pressure_hpa", 1013.25)),
-                temperature_c=float(getattr(cfg, "refraction_temperature_c", 15.0)))
+                temperature_c=float(getattr(cfg, "refraction_temperature_c", 15.0)),
+                relative_humidity=float(getattr(cfg, "refraction_relative_humidity", 0.0)))
 
 
 def _vector_stars_layer(frame, stars, cfg):
@@ -103,22 +111,60 @@ def _vector_stars_layer(frame, stars, cfg):
     ny, nx = frame.image.shape
     img = np.zeros((ny, nx), dtype=np.float64)
     pad = max(2.0, float(getattr(mask, "trace_pad_px", 0.0)))
-    x_all, y_all, f_all = star_pixels_and_flux(frame, stars, cfg, margin=pad)
+    colours = bool(getattr(cfg, "stellar_colours", False))
+    if colours:
+        x_all, y_all, f_all, bprp = star_pixels_and_flux(frame, stars, cfg, margin=pad, return_colour=True)
+        if len(bprp) and not np.isfinite(bprp).any():
+            raise ValueError("stellar_colours=True needs a star catalog with a bp_rp column")
+    else:
+        x_all, y_all, f_all = star_pixels_and_flux(frame, stars, cfg, margin=pad)
     if p is None:
         vg.splat_bilinear(img, x_all, y_all, f_all)
         return img.astype(np.float32), p
     k = vg.distortion_k_px(frame, float(getattr(cfg, "distortion_corner_frac", 0.0)))
+    k2 = vg.distortion_k2_px(frame, float(getattr(cfg, "distortion_k2_corner_frac", 0.0)))
     refr = _refraction_setup(frame, cfg)
-    # zeroth order: exactly the legacy star set (2 px margin), after refraction (at the
-    # reference wavelength) and distortion if any
-    if refr:
+    lc = float(getattr(cfg, "lateral_colour_ppm_per_nm", 0.0))
+    lc_ref = float(getattr(cfg, "lateral_colour_ref_nm", 550.0))
+    teff = None
+    if colours:
+        from .physics.stellar_colour import teff_from_bprp, colour_flux_factor, band_weights
+        teff = teff_from_bprp(bprp)
+        lam_band = p["lam0_nm"] + p["u_by_m"][1] * (p["lam1_nm"] - p["lam0_nm"])
+        base_w = p["wu_by_m"][1]
+        f_all = f_all * colour_flux_factor(teff, lam_band, base_w)
+    # zeroth order: exactly the legacy star set (2 px margin), after refraction / lateral colour
+    # (if any) and distortion. Without colours every star is imaged at the reference wavelengths
+    # (refraction_ref_nm; lateral colour has unit magnification at lateral_colour_ref_nm). With
+    # colours the broadband image sits at the flux-weighted mean of the star's per-wavelength
+    # positions under its own spectrum.
+    if colours and (refr or lc):
+        from .physics.refraction import refract
+        cxp, cyp = (nx - 1) / 2.0, (ny - 1) / 2.0
+        x0, y0 = np.empty_like(x_all), np.empty_like(y_all)
+        for i0 in range(0, len(x_all), 256):
+            sl = slice(i0, i0 + 256)
+            d = vg.camera_dirs(frame, x_all[sl], y_all[sl])
+            if refr:
+                dl = refract(d[:, None, :], refr["zenith_cam"], lam_band[None, :],
+                             refr["pressure_hpa"], refr["temperature_c"], refr["relative_humidity"])
+            else:
+                dl = np.broadcast_to(d[:, None, :], (len(d), len(lam_band), 3))
+            xl, yl = vg.camera_dirs_to_pixels(frame, dl)
+            if lc:
+                mg = 1.0 + lc * 1e-6 * (lam_band - lc_ref)
+                xl, yl = cxp + (xl - cxp) * mg[None, :], cyp + (yl - cyp) * mg[None, :]
+            W = band_weights(lam_band, base_w, teff[sl])
+            x0[sl], y0[sl] = (W * xl).sum(1), (W * yl).sum(1)
+        xd, yd = vg.distort_pixels(frame, x0, y0, k, k2=k2)
+    elif refr:
         from .physics.refraction import refract
         d0 = refract(vg.camera_dirs(frame, x_all, y_all), refr["zenith_cam"], float(cfg.refraction_ref_nm),
-                     refr["pressure_hpa"], refr["temperature_c"])
+                     refr["pressure_hpa"], refr["temperature_c"], refr["relative_humidity"])
         x0, y0 = vg.camera_dirs_to_pixels(frame, d0)
-        xd, yd = vg.distort_pixels(frame, x0, y0, k)
+        xd, yd = vg.distort_pixels(frame, x0, y0, k, k2=k2)
     else:
-        xd, yd = vg.distort_pixels(frame, x_all, y_all, k)
+        xd, yd = vg.distort_pixels(frame, x_all, y_all, k, k2=k2)
     on = (xd >= -2.0) & (xd <= nx - 1 + 2.0) & (yd >= -2.0) & (yd <= ny - 1 + 2.0)
     vg.splat_bilinear(img, xd[on], yd[on], f_all[on] * float(p["w_m"][0]))
     # diffracted orders: all stars within the trace pad (geometry in undistorted
@@ -128,14 +174,12 @@ def _vector_stars_layer(frame, stars, cfg):
     # needed several GB per process (overnight run, 2026-10-05). Chunking changes only the
     # floating-point summation order of the splat, not the physics.
     chunk = 256
-    lc = float(getattr(cfg, "lateral_colour_ppm_per_nm", 0.0))
-    lc_ref = float(getattr(cfg, "lateral_colour_ref_nm", 550.0))
     for i0 in range(0, len(x_all), chunk):
         sl = slice(i0, i0 + chunk)
         xs, ys, ws = vg.trace_samples(frame, p, mask, x_all[sl], y_all[sl], f_all[sl],
                                       lateral_colour_ppm_per_nm=lc, lateral_colour_ref_nm=lc_ref,
-                                      refraction=refr)
-        xs, ys = vg.distort_pixels(frame, xs, ys, k)
+                                      refraction=refr, teff=None if teff is None else teff[sl])
+        xs, ys = vg.distort_pixels(frame, xs, ys, k, k2=k2)
         vg.splat_bilinear(img, xs, ys, ws)
     return img.astype(np.float32), p
 
@@ -197,6 +241,9 @@ def render(frame: Frame,
     # ---- 2) stars layer (electrons, pre-PSF) ----
     vector = _is_vector_grating(cfg)
     vparams = None
+    if (float(getattr(cfg, "distortion_k2_corner_frac", 0.0)) or bool(getattr(cfg, "stellar_colours", False))) \
+            and not vector:
+        raise ValueError("distortion_k2_corner_frac / stellar_colours need mask.trace_model='vector_grating'")
     if float(getattr(cfg, "distortion_corner_frac", 0.0)) and not vector:
         raise ValueError("lens distortion is only supported with mask.trace_model='vector_grating' "
                          "(the legacy kernel cannot distort traces consistently with stars)")
@@ -208,12 +255,14 @@ def render(frame: Frame,
         res.truth = vg.truth_vectors(frame, cfg.mask)
         res.truth["distortion_corner_frac"] = float(getattr(cfg, "distortion_corner_frac", 0.0))
         res.truth["distortion_k_px"] = vg.distortion_k_px(frame, res.truth["distortion_corner_frac"])
+        res.truth["distortion_k2_corner_frac"] = float(getattr(cfg, "distortion_k2_corner_frac", 0.0))
+        res.truth["stellar_colours"] = bool(getattr(cfg, "stellar_colours", False))
         res.truth["lateral_colour_ppm_per_nm"] = float(getattr(cfg, "lateral_colour_ppm_per_nm", 0.0))
         res.truth["lateral_colour_ref_nm"] = float(getattr(cfg, "lateral_colour_ref_nm", 550.0))
         refr = _refraction_setup(frame, cfg)
         res.truth["refraction"] = None if not refr else dict(
             zenith_icrs=[float(v) for v in refr["zenith_icrs"]], pressure_hpa=refr["pressure_hpa"],
-            temperature_c=refr["temperature_c"], ref_nm=float(getattr(cfg, "refraction_ref_nm", 550.0)),
+            temperature_c=refr["temperature_c"], relative_humidity=refr["relative_humidity"], ref_nm=float(getattr(cfg, "refraction_ref_nm", 550.0)),
             zenith_deg=float(cfg.refraction_zenith_deg), zenith_pa_deg=float(cfg.refraction_zenith_pa_deg))
     if cfg.enable_stars and vector:
         stars_e, vparams = _vector_stars_layer(frame, stars, cfg)

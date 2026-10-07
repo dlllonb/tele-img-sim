@@ -259,7 +259,7 @@ def camera_dirs_to_pixels(frame, d):
 
 
 def trace_samples(frame, p, mask, x_px, y_px, flux_e, lateral_colour_ppm_per_nm: float = 0.0,
-                  lateral_colour_ref_nm: float = 550.0, refraction: dict | None = None):
+                  lateral_colour_ref_nm: float = 550.0, refraction: dict | None = None, teff=None):
     """All diffracted-order samples (pixel x, y, electrons) of the given stars.
 
     Lateral colour (optional): each sample at wavelength lambda is magnified radially about
@@ -270,7 +270,11 @@ def trace_samples(frame, p, mask, x_px, y_px, flux_e, lateral_colour_ppm_per_nm:
 
     Atmospheric refraction (optional, `refraction` = dict(zenith_cam, pressure_hpa,
     temperature_c)): each star's incident direction is refracted toward the zenith at each
-    sample's own wavelength BEFORE the grating equation (sim/physics/refraction.py)."""
+    sample's own wavelength BEFORE the grating equation (sim/physics/refraction.py).
+
+    Stellar colours (optional, `teff` = per-star effective temperatures (N,)): each star's
+    samples are weighted by its own photon spectrum instead of the shared colourless weights
+    (sim/physics/stellar_colour.py); its total diffracted flux is unchanged."""
     g, w, n = grid_triad_camera(float(getattr(mask, "angle_deg", 0.0)),
                                 float(getattr(mask, "tilt_deg", 0.0)),
                                 float(getattr(mask, "tilt_axis_deg", 0.0)))
@@ -287,7 +291,8 @@ def trace_samples(frame, p, mask, x_px, y_px, flux_e, lateral_colour_ppm_per_nm:
             if refraction:
                 from .refraction import refract
                 d_in = refract(d_star[:, None, :], refraction["zenith_cam"], lam_m[None, :] * 1e9,
-                               refraction["pressure_hpa"], refraction["temperature_c"])   # (N, L, 3)
+                               refraction["pressure_hpa"], refraction["temperature_c"],
+                               refraction.get("relative_humidity", 0.0))   # (N, L, 3)
                 d_out = diffract_per_lambda(d_in, lam_m, pitch_m, sgn * m, g, n)
             else:
                 d_out = diffract(d_star, lam_m, pitch_m, sgn * m, g, n)       # (N, L, 3)
@@ -298,7 +303,11 @@ def trace_samples(frame, p, mask, x_px, y_px, flux_e, lateral_colour_ppm_per_nm:
                 mag = 1.0 + lateral_colour_ppm_per_nm * 1e-6 * (lam_m * 1e9 - lateral_colour_ref_nm)   # (L,)
                 x = cx_ + (x - cx_) * mag[None, :]
                 y = cy_ + (y - cy_) * mag[None, :]
-            wt = (0.5 * wm) * flux_e[:, None] * wu[None, :]
+            if teff is not None:
+                from .stellar_colour import band_weights
+                wt = (0.5 * wm) * flux_e[:, None] * band_weights(lam_m * 1e9, wu, teff)
+            else:
+                wt = (0.5 * wm) * flux_e[:, None] * wu[None, :]
             ok = np.isfinite(x) & np.isfinite(y) & (d_out[..., 2] > 0)
             xs.append(x[ok]); ys.append(y[ok]); ws.append(wt[ok])
     if not xs:
@@ -376,15 +385,28 @@ def distortion_k_px(frame, corner_frac: float) -> float:
     return float(corner_frac) / r_corner ** 2
 
 
-def distort_pixels(frame, x, y, k: float, n_iter: int = 60):
+def distortion_k2_px(frame, corner_frac2: float) -> float:
+    """Fifth-order radial coefficient: undistorted = distorted (1 + k r^2 + k2 r^4), with
+    k2 r_corner^4 = corner_frac2. A k2 term is NOT representable by a 3rd-order SIP solution;
+    it makes "distortion is removed by the plate solution" a real test rather than an exact
+    model match."""
+    ny, nx = frame.image.shape
+    r_corner = np.hypot((nx - 1) / 2.0, (ny - 1) / 2.0)
+    return float(corner_frac2) / r_corner ** 4
+
+
+def distort_pixels(frame, x, y, k: float, n_iter: int = 60, k2: float = 0.0):
     """Undistorted (gnomonic) pixel positions -> distorted (as recorded) positions."""
-    if not k:
+    if not k and not k2:
         return x, y
     ny, nx = frame.image.shape
     cx, cy = (nx - 1) / 2.0, (ny - 1) / 2.0
     u, v = np.asarray(x, float) - cx, np.asarray(y, float) - cy
     ud, vd = u.copy(), v.copy()
     for _ in range(n_iter):
-        s = 1.0 + k * (ud * ud + vd * vd)
+        r2 = ud * ud + vd * vd
+        s = 1.0 + k * r2
+        if k2:
+            s = s + k2 * r2 * r2
         ud, vd = u / s, v / s
     return ud + cx, vd + cy

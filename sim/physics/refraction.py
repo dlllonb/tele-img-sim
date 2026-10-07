@@ -23,19 +23,31 @@ from __future__ import annotations
 import numpy as np
 
 
-def n_air_minus_1(lam_nm, pressure_hpa: float = 1013.25, temperature_c: float = 15.0):
+def n_air_minus_1(lam_nm, pressure_hpa: float = 1013.25, temperature_c: float = 15.0,
+                  relative_humidity: float = 0.0):
+    """Edlen (1966) dry air, ideal-gas scaled, plus (optionally) Edlen's water-vapour term
+    -f (3.7345 - 0.0401 s^2) 1e-10, with f the partial pressure of water vapour in Pa from the
+    relative humidity (Magnus saturation pressure). Humidity is a simulator-side detail that the
+    estimator does not model."""
     s2 = (1.0e3 / np.asarray(lam_nm, float)) ** 2
     nm1 = 1e-8 * (8342.13 + 2406030.0 / (130.0 - s2) + 15997.0 / (38.9 - s2))
-    return nm1 * (pressure_hpa / 1013.25) * (288.15 / (273.15 + temperature_c))
+    nm1 = nm1 * (pressure_hpa / 1013.25) * (288.15 / (273.15 + temperature_c))
+    if relative_humidity:
+        e_sat_hpa = 6.1094 * np.exp(17.625 * temperature_c / (temperature_c + 243.04))
+        f_pa = float(relative_humidity) * e_sat_hpa * 100.0
+        nm1 = nm1 - f_pa * (3.7345 - 0.0401 * s2) * 1e-10
+    return nm1
 
 
-def refract(d, zenith, lam_nm, pressure_hpa: float = 1013.25, temperature_c: float = 15.0):
+def refract(d, zenith, lam_nm, pressure_hpa: float = 1013.25, temperature_c: float = 15.0,
+            relative_humidity: float = 0.0):
     """True directions d (..., 3) -> apparent directions, rotated toward `zenith` (3,) by
     (n(lam) - 1) tan z. lam_nm broadcasts against d[..., 0]."""
     d = np.asarray(d, float)
     Z = np.asarray(zenith, float) / np.linalg.norm(zenith)
     cz = np.clip(d @ Z, -1.0, 1.0)
-    R = n_air_minus_1(lam_nm, pressure_hpa, temperature_c) * np.sqrt(1.0 - cz ** 2) / np.maximum(cz, 1e-6)
+    R = n_air_minus_1(lam_nm, pressure_hpa, temperature_c, relative_humidity) \
+        * np.sqrt(1.0 - cz ** 2) / np.maximum(cz, 1e-6)
     t = Z - cz[..., None] * d
     tn = np.linalg.norm(t, axis=-1, keepdims=True)
     t = np.where(tn > 1e-15, t / np.maximum(tn, 1e-300), 0.0)

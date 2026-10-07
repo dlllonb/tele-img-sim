@@ -72,12 +72,15 @@ def run_sim_and_report(
     mask_trace_pad_px: float = 0.0,
     mask_smear_cap: int = 250,                 # max wavelength samples per order side (legacy default 250)
     lens_distortion_corner_frac: float = 0.0,  # radial distortion at the corner (vector_grating only)
+    lens_distortion_k2_corner_frac: float = 0.0,  # fifth-order radial distortion at the corner (vector_grating only)
+    stellar_colours: bool = False,                # per-star spectra from catalog Gaia BP-RP (vector_grating only)
     lens_lateral_colour_ppm_per_nm: float = 0.0,  # lateral colour of diffracted samples (vector_grating only)
     lens_lateral_colour_ref_nm: float = 550.0,    # wavelength at which zeroth-order stars are imaged
     atm_refraction_zenith_deg: float = 0.0,       # zenith distance of the field centre (0 = no refraction)
     atm_refraction_zenith_pa_deg: float = 0.0,    # PA (E of N) of the zenith direction at the field centre
     atm_refraction_pressure_hpa: float = 1013.25,
     atm_refraction_temperature_c: float = 15.0,
+    atm_refraction_relative_humidity: float = 0.0,
     atm_refraction_ref_nm: float = 550.0,         # wavelength at which zeroth-order stars are refracted
 
     # -----------------------
@@ -214,12 +217,15 @@ def run_sim_and_report(
 
         jitter_pointing_rms=float(jitter_pointing_rms),
         distortion_corner_frac=float(lens_distortion_corner_frac),
+        distortion_k2_corner_frac=float(lens_distortion_k2_corner_frac),
+        stellar_colours=bool(stellar_colours),
         lateral_colour_ppm_per_nm=float(lens_lateral_colour_ppm_per_nm),
         lateral_colour_ref_nm=float(lens_lateral_colour_ref_nm),
         refraction_zenith_deg=float(atm_refraction_zenith_deg),
         refraction_zenith_pa_deg=float(atm_refraction_zenith_pa_deg),
         refraction_pressure_hpa=float(atm_refraction_pressure_hpa),
         refraction_temperature_c=float(atm_refraction_temperature_c),
+        refraction_relative_humidity=float(atm_refraction_relative_humidity),
         refraction_ref_nm=float(atm_refraction_ref_nm),
 
         enable_sky=bool(enable_sky),
