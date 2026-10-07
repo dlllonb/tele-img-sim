@@ -226,6 +226,20 @@ def diffract(d_in, lam_m, pitch_m, m, g_hat, n_hat):
     return out
 
 
+def diffract_per_lambda(d_in_nl, lam_m, pitch_m, m, g_hat, n_hat):
+    """`diffract` for incident directions that differ per wavelength (e.g. after chromatic
+    atmospheric refraction): d_in_nl (N, L, 3), lam_m (L,). Returns (N, L, 3)."""
+    d_in = np.asarray(d_in_nl, float)
+    dn = d_in @ n_hat                                                   # (N, L)
+    dt = d_in - dn[..., None] * n_hat                                   # (N, L, 3)
+    shift = (m * np.asarray(lam_m, float) / pitch_m)[:, None] * g_hat  # (L, 3)
+    dt_out = dt + shift[None, :, :]
+    s2 = 1.0 - np.sum(dt_out ** 2, axis=-1)
+    out = dt_out + (np.sqrt(np.clip(s2, 0.0, None)) * np.sign(dn))[..., None] * n_hat
+    out[s2 <= 0] = np.nan
+    return out
+
+
 def camera_dirs(frame, x_px, y_px) -> np.ndarray:
     ny, nx = frame.image.shape
     ps = float(frame.plate_scale_rad_per_px)
@@ -244,8 +258,19 @@ def camera_dirs_to_pixels(frame, d):
     return x, y
 
 
-def trace_samples(frame, p, mask, x_px, y_px, flux_e):
-    """All diffracted-order samples (pixel x, y, electrons) of the given stars."""
+def trace_samples(frame, p, mask, x_px, y_px, flux_e, lateral_colour_ppm_per_nm: float = 0.0,
+                  lateral_colour_ref_nm: float = 550.0, refraction: dict | None = None):
+    """All diffracted-order samples (pixel x, y, electrons) of the given stars.
+
+    Lateral colour (optional): each sample at wavelength lambda is magnified radially about
+    the optical axis (image centre) by 1 + c * 1e-6 * (lambda - lambda_ref), with c in ppm/nm.
+    Broadband zeroth-order stars are imaged at lambda_ref and are not shifted. This is a
+    lens property applied in the undistorted (gnomonic) pixel frame, before any radial
+    distortion. With c = 0 the samples are bit-for-bit those of the original code.
+
+    Atmospheric refraction (optional, `refraction` = dict(zenith_cam, pressure_hpa,
+    temperature_c)): each star's incident direction is refracted toward the zenith at each
+    sample's own wavelength BEFORE the grating equation (sim/physics/refraction.py)."""
     g, w, n = grid_triad_camera(float(getattr(mask, "angle_deg", 0.0)),
                                 float(getattr(mask, "tilt_deg", 0.0)),
                                 float(getattr(mask, "tilt_axis_deg", 0.0)))
@@ -259,8 +284,20 @@ def trace_samples(frame, p, mask, x_px, y_px, flux_e):
         lam_m = (p["lam0_nm"] + p["u_by_m"][m] * (p["lam1_nm"] - p["lam0_nm"])) * 1e-9
         wu = p["wu_by_m"][m]
         for sgn in (+1, -1):
-            d_out = diffract(d_star, lam_m, pitch_m, sgn * m, g, n)       # (N, L, 3)
+            if refraction:
+                from .refraction import refract
+                d_in = refract(d_star[:, None, :], refraction["zenith_cam"], lam_m[None, :] * 1e9,
+                               refraction["pressure_hpa"], refraction["temperature_c"])   # (N, L, 3)
+                d_out = diffract_per_lambda(d_in, lam_m, pitch_m, sgn * m, g, n)
+            else:
+                d_out = diffract(d_star, lam_m, pitch_m, sgn * m, g, n)       # (N, L, 3)
             x, y = camera_dirs_to_pixels(frame, d_out)
+            if lateral_colour_ppm_per_nm:
+                ny_, nx_ = frame.image.shape
+                cx_, cy_ = (nx_ - 1) / 2.0, (ny_ - 1) / 2.0
+                mag = 1.0 + lateral_colour_ppm_per_nm * 1e-6 * (lam_m * 1e9 - lateral_colour_ref_nm)   # (L,)
+                x = cx_ + (x - cx_) * mag[None, :]
+                y = cy_ + (y - cy_) * mag[None, :]
             wt = (0.5 * wm) * flux_e[:, None] * wu[None, :]
             ok = np.isfinite(x) & np.isfinite(y) & (d_out[..., 2] > 0)
             xs.append(x[ok]); ys.append(y[ok]); ws.append(wt[ok])

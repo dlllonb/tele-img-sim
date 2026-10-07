@@ -702,6 +702,14 @@ def save_frame_fits(path,
         if hasattr(cfg, "jitter_pointing_rms"):    hdr["JITRMS"]  = (float(cfg.jitter_pointing_rms), "Pointing jitter RMS [arcsec]")
         if float(getattr(cfg, "distortion_corner_frac", 0.0)):
             hdr["DISTCORN"] = (float(cfg.distortion_corner_frac), "Radial distortion at corner (fraction)")
+        if float(getattr(cfg, "lateral_colour_ppm_per_nm", 0.0)):
+            hdr["LATCOL"] = (float(cfg.lateral_colour_ppm_per_nm), "Lateral colour [ppm/nm]")
+            hdr["LATCOLRF"] = (float(cfg.lateral_colour_ref_nm), "Lateral colour reference wavelength [nm]")
+        if float(getattr(cfg, "refraction_zenith_deg", 0.0)):
+            hdr["REFRZ"] = (float(cfg.refraction_zenith_deg), "Refraction: zenith distance of centre [deg]")
+            hdr["REFRPA"] = (float(cfg.refraction_zenith_pa_deg), "Refraction: PA of zenith at centre [deg]")
+            hdr["REFRP"] = (float(cfg.refraction_pressure_hpa), "Refraction: pressure [hPa]")
+            hdr["REFRT"] = (float(cfg.refraction_temperature_c), "Refraction: temperature [C]")
 
         # stage toggles
         for k, key in [

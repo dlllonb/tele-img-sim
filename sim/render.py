@@ -29,6 +29,21 @@ class RenderConfig:
     # radial lens distortion at the sensor corner (fraction; vector_grating only, see
     # sim/physics/vector_grating.py). 0 = none (default, unchanged behaviour).
     distortion_corner_frac: float = 0.0
+    # lateral colour (vector_grating only): wavelength-dependent radial magnification of the
+    # diffracted samples, ppm per nm relative to lateral_colour_ref_nm (the wavelength at which
+    # the broadband zeroth-order stars are imaged). 0 = none (default, unchanged behaviour).
+    lateral_colour_ppm_per_nm: float = 0.0
+    lateral_colour_ref_nm: float = 550.0
+    # atmospheric refraction (vector_grating only; sim/physics/refraction.py). Off when
+    # refraction_zenith_deg = 0. The field centre sits refraction_zenith_deg from the zenith,
+    # with the zenith toward position angle refraction_zenith_pa_deg (east of north) at the
+    # field centre. Zeroth-order stars are refracted at refraction_ref_nm, diffracted samples
+    # at their own wavelengths (before the grating).
+    refraction_zenith_deg: float = 0.0
+    refraction_zenith_pa_deg: float = 0.0
+    refraction_pressure_hpa: float = 1013.25
+    refraction_temperature_c: float = 15.0
+    refraction_ref_nm: float = 550.0
     psf_sigma_px: float = 1.0
 
     # --- jitter ---
@@ -64,6 +79,20 @@ def _is_vector_grating(cfg) -> bool:
             and getattr(mask, "trace_model", "legacy_kernel") == "vector_grating")
 
 
+def _refraction_setup(frame, cfg):
+    """None if refraction is off, else dict(zenith_cam, zenith_icrs, pressure_hpa, temperature_c)."""
+    z0 = float(getattr(cfg, "refraction_zenith_deg", 0.0))
+    if not z0:
+        return None
+    from .physics.refraction import zenith_from_field
+    M = vg.camera_to_icrs_matrix(frame)                     # camera -> ICRS (orthogonal)
+    b_icrs = M @ np.array([0.0, 0.0, 1.0])
+    Z_icrs = zenith_from_field(b_icrs, z0, float(getattr(cfg, "refraction_zenith_pa_deg", 0.0)))
+    return dict(zenith_cam=np.linalg.solve(M, Z_icrs), zenith_icrs=Z_icrs,
+                pressure_hpa=float(getattr(cfg, "refraction_pressure_hpa", 1013.25)),
+                temperature_c=float(getattr(cfg, "refraction_temperature_c", 15.0)))
+
+
 def _vector_stars_layer(frame, stars, cfg):
     """Pre-PSF electrons: zeroth order (flux * w_m[0]) + every diffracted
     sample from the exact vector grating equation (sim/physics/vector_grating.py)."""
@@ -79,8 +108,17 @@ def _vector_stars_layer(frame, stars, cfg):
         vg.splat_bilinear(img, x_all, y_all, f_all)
         return img.astype(np.float32), p
     k = vg.distortion_k_px(frame, float(getattr(cfg, "distortion_corner_frac", 0.0)))
-    # zeroth order: exactly the legacy star set (2 px margin), after distortion if any
-    xd, yd = vg.distort_pixels(frame, x_all, y_all, k)
+    refr = _refraction_setup(frame, cfg)
+    # zeroth order: exactly the legacy star set (2 px margin), after refraction (at the
+    # reference wavelength) and distortion if any
+    if refr:
+        from .physics.refraction import refract
+        d0 = refract(vg.camera_dirs(frame, x_all, y_all), refr["zenith_cam"], float(cfg.refraction_ref_nm),
+                     refr["pressure_hpa"], refr["temperature_c"])
+        x0, y0 = vg.camera_dirs_to_pixels(frame, d0)
+        xd, yd = vg.distort_pixels(frame, x0, y0, k)
+    else:
+        xd, yd = vg.distort_pixels(frame, x_all, y_all, k)
     on = (xd >= -2.0) & (xd <= nx - 1 + 2.0) & (yd >= -2.0) & (yd <= ny - 1 + 2.0)
     vg.splat_bilinear(img, xd[on], yd[on], f_all[on] * float(p["w_m"][0]))
     # diffracted orders: all stars within the trace pad (geometry in undistorted
@@ -90,9 +128,13 @@ def _vector_stars_layer(frame, stars, cfg):
     # needed several GB per process (overnight run, 2026-10-05). Chunking changes only the
     # floating-point summation order of the splat, not the physics.
     chunk = 256
+    lc = float(getattr(cfg, "lateral_colour_ppm_per_nm", 0.0))
+    lc_ref = float(getattr(cfg, "lateral_colour_ref_nm", 550.0))
     for i0 in range(0, len(x_all), chunk):
         sl = slice(i0, i0 + chunk)
-        xs, ys, ws = vg.trace_samples(frame, p, mask, x_all[sl], y_all[sl], f_all[sl])
+        xs, ys, ws = vg.trace_samples(frame, p, mask, x_all[sl], y_all[sl], f_all[sl],
+                                      lateral_colour_ppm_per_nm=lc, lateral_colour_ref_nm=lc_ref,
+                                      refraction=refr)
         xs, ys = vg.distort_pixels(frame, xs, ys, k)
         vg.splat_bilinear(img, xs, ys, ws)
     return img.astype(np.float32), p
@@ -158,10 +200,21 @@ def render(frame: Frame,
     if float(getattr(cfg, "distortion_corner_frac", 0.0)) and not vector:
         raise ValueError("lens distortion is only supported with mask.trace_model='vector_grating' "
                          "(the legacy kernel cannot distort traces consistently with stars)")
+    if float(getattr(cfg, "lateral_colour_ppm_per_nm", 0.0)) and not vector:
+        raise ValueError("lateral colour is only supported with mask.trace_model='vector_grating'")
+    if float(getattr(cfg, "refraction_zenith_deg", 0.0)) and not vector:
+        raise ValueError("atmospheric refraction is only supported with mask.trace_model='vector_grating'")
     if vector:
         res.truth = vg.truth_vectors(frame, cfg.mask)
         res.truth["distortion_corner_frac"] = float(getattr(cfg, "distortion_corner_frac", 0.0))
         res.truth["distortion_k_px"] = vg.distortion_k_px(frame, res.truth["distortion_corner_frac"])
+        res.truth["lateral_colour_ppm_per_nm"] = float(getattr(cfg, "lateral_colour_ppm_per_nm", 0.0))
+        res.truth["lateral_colour_ref_nm"] = float(getattr(cfg, "lateral_colour_ref_nm", 550.0))
+        refr = _refraction_setup(frame, cfg)
+        res.truth["refraction"] = None if not refr else dict(
+            zenith_icrs=[float(v) for v in refr["zenith_icrs"]], pressure_hpa=refr["pressure_hpa"],
+            temperature_c=refr["temperature_c"], ref_nm=float(getattr(cfg, "refraction_ref_nm", 550.0)),
+            zenith_deg=float(cfg.refraction_zenith_deg), zenith_pa_deg=float(cfg.refraction_zenith_pa_deg))
     if cfg.enable_stars and vector:
         stars_e, vparams = _vector_stars_layer(frame, stars, cfg)
     elif cfg.enable_stars:
