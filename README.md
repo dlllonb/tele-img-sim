@@ -153,6 +153,31 @@ frame, res, paths = run_sim_and_report(
 res.truth  # ICRS grating vector, wire direction, grid normal and boresight
 ```
 
+Further optional systematics (all off by default, `vector_grating` only; defaults
+reproduce the renders above bit for bit):
+
+```python
+frame, res, paths = run_sim_and_report(
+    ...,
+    stars_csv="sim/physics/starfields/field3_colour.csv",
+    stellar_colours=True,                    # per-star blackbody spectra from the catalog's Gaia BP-RP
+    lens_distortion_k2_corner_frac=0.0,      # fifth-order (r^5) radial distortion at the corner
+    lens_lateral_colour_ppm_per_nm=0.0,      # wavelength-dependent radial magnification of the spectra
+    lens_lateral_colour_ref_nm=550.0,        # ... unity at this wavelength
+    atm_refraction_zenith_deg=0.0,           # atmospheric refraction: zenith distance of the field centre
+    atm_refraction_zenith_pa_deg=0.0,        # PA (E of N) of the zenith direction
+    atm_refraction_pressure_hpa=1013.25,
+    atm_refraction_temperature_c=15.0,
+    atm_refraction_relative_humidity=0.0,    # Edlen water-vapour term
+    atm_refraction_ref_nm=550.0,             # wavelength at which zeroth-order stars are refracted
+)
+```
+
+Star catalogues (`sim/physics/starfields/`): `field3.csv` is the Gaia catalogue
+used for the validation populations; `field3_colour.csv` is the same stars (identical
+`ra_deg`, `dec_deg`, `mag` columns) with Gaia DR3 `bp_rp` added (99.9 % have a colour;
+the rest get the solar default).
+
 ---
 
 ## Running the measurement pipeline
